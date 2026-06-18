@@ -1,0 +1,22 @@
+{
+    "metadados": {
+        "telegram": {
+            "chat_id": 123456789,
+            "mensagem": "Olá, mundo!"
+        }
+    },
+    "contatos": [
+        {
+            "nome": "João",
+            "telefone": "5511999990001"
+        },
+        {
+            "nome": "Maria",
+            "telefone": "5511999990002"
+        },
+        {
+            "nome": "Pedro",
+            "telefone": "5511999990003"
+        }
+    ]
+}
