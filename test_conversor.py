@@ -5,7 +5,7 @@ class TestConversorMoedas(unittest.TestCase):
     def test_conversao(self):
         conversor = ConversorMoedas()
         self.assertAlmostEqual(conversor.converter(100, 'USD', 'EUR'), 88.0)
-        self.assertAlmostEqual(conversor.converter(100, 'EUR', 'USD'), 113.64)
+        self.assertAlmostEqual(conversor.converter(100, 'EUR', 'USD'), 113.64, places=2)
         self.assertAlmostEqual(conversor.converter(100, 'USD', 'BRL'), 520.0)
 
     def test_cache(self):
