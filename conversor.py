@@ -9,6 +9,9 @@ class ConversorMoedas:
             'BRL': 5.20
         }
         self.cache = {}
+        self.valor = 0
+        self.moeda_origem = ''
+        self.moeda_destino = ''
 
     def converter(self, valor: float, moeda_origem: str, moeda_destino: str) -> float:
         if moeda_origem not in self.taxas_de_cambio or moeda_destino not in self.taxas_de_cambio:
