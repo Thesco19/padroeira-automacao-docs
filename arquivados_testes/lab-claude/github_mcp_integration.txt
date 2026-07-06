@@ -1,0 +1,38 @@
+Para adicionar o GitHub como um MCP (Model Control Plane) no seu projeto, siga os passos abaixo:
+
+1. **Instalar o GitHub CLI**:
+Primeiro, você precisa instalar o GitHub CLI () no seu sistema. O GitHub CLI permite interagir com o GitHub diretamente a partir da linha de comando.
+
+
+
+2. **Autenticar no GitHub**:
+Após instalar o GitHub CLI, você precisa autenticá-lo com sua conta GitHub usando o token de acesso pessoal que você forneceu.
+
+
+
+3. **Integrar com o Projeto**:
+Você pode adicionar comandos do GitHub CLI nos scripts de configuração do seu projeto, como  ou , conforme necessário.
+
+### Exemplo de Integração
+
+Você pode adicionar um comando para clonar um repositório GitHub no script :
+
+
+
+### Configuração Adicional
+
+Se você quiser integrar o GitHub de forma mais avançada, como usando a API do GitHub, você pode configurar um token de acesso pessoal (PAT) e usá-lo para autenticação.
+
+1. **Criar um Token de Acesso Pessoal**:
+- Vá para [GitHub Settings](https://github.com/settings/tokens).
+- Clique em "Generate new token".
+- Selecione os escopos necessários e gere o token.
+
+2. **Usar o Token na CLI**:
+Você pode configurar o token no GitHub CLI:
+
+
+
+### Conclusão
+
+Seguindo esses passos, você pode integrar o GitHub como um MCP no seu projeto, permitindo interações mais avançadas e automatizadas com o GitHub diretamente a partir da linha de comando. Se você tiver mais perguntas ou precisar de ajuda adicional, sinta-se à vontade para perguntar!

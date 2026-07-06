@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__filesystem__read_text_file",
+      "mcp__filesystem__list_allowed_directories",
+      "Bash(logging)",
+      "Bash(check_last_row_status)",
+      "Bash(extract_data)",
+      "Bash(get_destination_file)",
+      "Bash(consolidate_data)",
+      "Bash(update_source_file)",
+      "Bash(main)",
+      "Bash(PermissionError)",
+      "Bash(__name__ == \"__main__\":)",
+      "Bash(echo \"# Explicação do Script\\\\n\\\\n1. **Configuração do Logging**: O script configura o módulo `logging` para registrar mensagens de erro e informações em um arquivo de log e na saída padrão.\\\\n\\\\n2. **Caminhos dos Arquivos**: Define os caminhos dos arquivos de origem e destino.\\\\n\\\\n3. **Funções Principais**:\\\\n   - `check_last_row_status`: Verifica se a última linha preenchida do arquivo de origem possui a tag 'Sincronizado'.\\\\n   - `extract_data`: Extrai os dados da última linha preenchida do arquivo de origem.\\\\n   - `get_destination_file`: Identifica o mês e o ano da data e retorna o caminho do arquivo de destino.\\\\n   - `consolidate_data`: Insere os dados na próxima linha disponível do arquivo de destino e recalcula os totais.\\\\n   - `update_source_file`: Atualiza a linha correspondente no arquivo de origem com a tag 'Sincronizado' e a data/hora da automação.\\\\n\\\\n4. **Função `main`**: Coordena a execução das funções principais, incluindo o mecanismo de retry para lidar com `PermissionError`.\\\\n\\\\n5. **Bloco `if __name__ == \"__main__\":`: Executa a função `main` quando o script é executado diretamente.\\\\n\\\\nEste script atende à especificação técnica fornecida, garantindo idempotência, checagem, processamento, consolidação, hardening de concorrência e sinalização.\")"
+    ]
+  }
+}

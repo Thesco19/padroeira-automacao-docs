@@ -1,0 +1,4 @@
+lab_agente_web/venv/
+.venv/
+*.log
+.aider*

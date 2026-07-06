@@ -1,0 +1,20 @@
+# Ambientes virtuais
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Logs grandes
+logs/*.log
+
+# Dados sensíveis
+config/credentials.py
+*.env
+fechamento_caixa.txt
+
+# Backups temporários
+backup/
+data/backups/
+
+# MacOS
+.DS_Store
