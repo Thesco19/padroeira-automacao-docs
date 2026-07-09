@@ -1,0 +1,50 @@
+model_list:
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: mistral/mistral-large-latest
+      api_key: "os.environ/MISTRAL_API_KEY"
+      max_tokens: 8192
+      timeout: 60
+      num_retries: 5
+
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: nvidia_nim/moonshotai/kimi-k2.6
+      api_key: "os.environ/NVIDIA_API_KEY"
+      api_base: "https://integrate.api.nvidia.com/v1"
+      max_tokens: 8192
+
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: nvidia_nim/z-ai/glm-5.2
+      api_key: "os.environ/NVIDIA_API_KEY"
+      api_base: "https://integrate.api.nvidia.com/v1"
+      max_tokens: 8192
+
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: nvidia_nim/meta/llama-3.3-70b-instruct
+      api_key: "os.environ/NVIDIA_API_KEY"
+      api_base: "https://integrate.api.nvidia.com/v1"
+      max_tokens: 8192
+
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: groq/llama-3.1-8b-instant
+      api_key: "os.environ/GROQ_API_KEY"
+      max_tokens: 8192
+
+  - model_name: claude-3-5-sonnet
+    litellm_params:
+      model: mistral/mistral-large-latest
+      api_key: "os.environ/MISTRAL_API_KEY"
+      max_tokens: 8192
+      timeout: 60
+      num_retries: 5
+
+litellm_settings:
+  drop_params: true
+  modify_params: true
+  num_retries: 3
+  allowed_fails: 5
+  cooldown_time: 10
