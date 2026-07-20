@@ -3,18 +3,24 @@
 """
 Async Reconciliation Architecture V2 - Cortex Padroeira Integration
 
-This script integrates cortex_padroeira_async.py, engine_consolidacao_async.py, and
-motor_balancete_async.py using an asynchronous reconciliation pattern.
+Este script foi movido para a pasta **lab-a** e agora serve como o
+principal ponto de entrada da automação. Ele coordena a execução
+assíncrona dos componentes:
+
+1. CortexPadroeiraAsync – extração de dados e verificação de planilhas.
+2. EngineConsolidacaoAsync – consolidação dos dados.
+3. MotorBalanceteAsync – injeção do balancete.
+
+Os imports foram atualizados para usar caminhos absolutos, permitindo
+que o módulo seja executado a partir da nova estrutura de diretórios.
 """
 
 import asyncio
-import os
-import sys
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
-# Configure logging
+# Configuração de logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -23,12 +29,7 @@ logger = logging.getLogger("AsyncReconciliationV2")
 
 class AsyncReconciliationEngine:
     """
-    Async Reconciliation Engine V2 for Cortex Padroeira
-
-    This engine coordinates the execution of:
-    1. CortexPadroeiraAsync - Main data extraction and Telegram bot
-    2. EngineConsolidacaoAsync - Data consolidation engine
-    3. MotorBalanceteAsync - Balance sheet motor
+    Engine de Reconciliação Assíncrona V2 para Cortex Padroeira.
     """
 
     def __init__(self):
@@ -44,26 +45,20 @@ class AsyncReconciliationEngine:
         ]
 
     async def execute_cortex_padroeira(self) -> Dict[str, Any]:
-        """
-        Execute the Cortex Padroeira Async component
-        """
+        """Executa o componente Cortex Padroeira (versão assíncrona)."""
         try:
-            logger.info("Starting Cortex Padroeira Async component")
+            logger.info("Iniciando componente Cortex Padroeira Async")
 
-            # Import the async module
-            from cortex_padroeira_async import CortexPadroeiraAsync
+            # Importação absoluta dos módulos que permanecem em `lab_agente_web`
+            from lab_agente_web.cortex_padroeira_async import CortexPadroeiraAsync
 
-            # Create an instance and get status
             cortex = CortexPadroeiraAsync()
-
-            # Simulate the data extraction and verification process
             dados = cortex.extrair_dados_saurus()
             paridade_ok = cortex.verificar_paridade_planilhas()
-
             status = cortex.get_status()
 
             if dados and paridade_ok:
-                logger.info("Cortex Padroeira Async completed successfully")
+                logger.info("Cortex Padroeira Async concluído com sucesso")
                 return {
                     "status": "completed",
                     "result": "Data extraction and verification completed",
@@ -82,7 +77,7 @@ class AsyncReconciliationEngine:
 
         except Exception as e:
             error_msg = f"Exception in Cortex Padroeira Async: {str(e)}"
-            logger.error(error_msg)
+            logger.error(error_msg, exc_info=True)
             return {
                 "status": "error",
                 "result": None,
@@ -91,21 +86,17 @@ class AsyncReconciliationEngine:
             }
 
     async def execute_engine_consolidacao(self) -> Dict[str, Any]:
-        """
-        Execute the Engine Consolidacao Async component
-        """
+        """Executa o componente Engine de Consolidação (versão assíncrona)."""
         try:
-            logger.info("Starting Engine Consolidacao Async component")
+            logger.info("Iniciando componente Engine Consolidacao Async")
 
-            # Import the async module
-            from engine_consolidacao_async import EngineConsolidacaoAsync
+            from lab_agente_web.engine_consolidacao_async import EngineConsolidacaoAsync
 
-            # Create an instance and execute the engine
             engine = EngineConsolidacaoAsync()
             result = engine.executar_motor_unificado()
 
             if result["status"] == "success":
-                logger.info("Engine Consolidacao Async completed successfully")
+                logger.info("Engine Consolidacao Async concluído com sucesso")
                 return {
                     "status": "completed",
                     "result": "Data consolidation completed",
@@ -124,7 +115,7 @@ class AsyncReconciliationEngine:
 
         except Exception as e:
             error_msg = f"Exception in Engine Consolidacao Async: {str(e)}"
-            logger.error(error_msg)
+            logger.error(error_msg, exc_info=True)
             return {
                 "status": "error",
                 "result": None,
@@ -133,21 +124,17 @@ class AsyncReconciliationEngine:
             }
 
     async def execute_motor_balancete(self) -> Dict[str, Any]:
-        """
-        Execute the Motor Balancete Async component
-        """
+        """Executa o componente Motor Balancete (versão assíncrona)."""
         try:
-            logger.info("Starting Motor Balancete Async component")
+            logger.info("Iniciando componente Motor Balancete Async")
 
-            # Import the async module
-            from motor_balancete_async import MotorBalanceteAsync
+            from lab_agente_web.motor_balancete_async import MotorBalanceteAsync
 
-            # Create an instance and execute the motor
             motor = MotorBalanceteAsync()
             result = motor.injetar_balancete()
 
             if result["status"] == "success":
-                logger.info("Motor Balancete Async completed successfully")
+                logger.info("Motor Balancete Async concluído com sucesso")
                 return {
                     "status": "completed",
                     "result": "Balance sheet injection completed",
@@ -166,7 +153,7 @@ class AsyncReconciliationEngine:
 
         except Exception as e:
             error_msg = f"Exception in Motor Balancete Async: {str(e)}"
-            logger.error(error_msg)
+            logger.error(error_msg, exc_info=True)
             return {
                 "status": "error",
                 "result": None,
@@ -175,70 +162,63 @@ class AsyncReconciliationEngine:
             }
 
     async def run_reconciliation(self) -> Dict[str, Any]:
-        """
-        Run the reconciliation process asynchronously
-        """
-        logger.info("Starting Async Reconciliation V2 process")
+        """Orquestra a execução dos três componentes em ordem."""
+        logger.info("Iniciando processo de Reconciliação Async V2")
 
-        # Execute components in order
+        # 1. Cortex Padroeira
         self.status["cortex_padroeira"] = await self.execute_cortex_padroeira()
-
         if self.status["cortex_padroeira"]["status"] == "error":
-            logger.error("Aborting reconciliation due to error in Cortex Padroeira")
+            logger.error("Abortando reconciliação devido a erro no Cortex Padroeira")
             return {"status": "error", "details": self.status}
 
+        # 2. Engine de Consolidação
         self.status["engine_consolidacao"] = await self.execute_engine_consolidacao()
-
         if self.status["engine_consolidacao"]["status"] == "error":
-            logger.error("Aborting reconciliation due to error in Engine Consolidacao")
+            logger.error("Abortando reconciliação devido a erro na Engine de Consolidação")
             return {"status": "error", "details": self.status}
 
+        # 3. Motor Balancete
         self.status["motor_balancete"] = await self.execute_motor_balancete()
 
-        # Check overall status
+        # Verificação final
         all_success = all(
-            self.status[component]["status"] == "completed"
-            for component in self.execution_order
+            self.status[comp]["status"] == "completed"
+            for comp in self.execution_order
         )
 
         if all_success:
-            logger.info("Async Reconciliation V2 completed successfully")
+            logger.info("Reconciliação Async V2 concluída com sucesso")
             return {"status": "success", "details": self.status}
         else:
-            logger.error("Async Reconciliation V2 completed with errors")
+            logger.error("Reconciliação Async V2 concluída com erros")
             return {"status": "error", "details": self.status}
 
     def get_status_report(self) -> Dict[str, Any]:
-        """
-        Generate a status report of the reconciliation process
-        """
+        """Gera um relatório resumido do status da reconciliação."""
+        overall = "success" if all(
+            self.status[comp]["status"] == "completed"
+            for comp in self.execution_order
+        ) else "error"
         return {
             "timestamp": datetime.now().isoformat(),
             "status": self.status,
-            "overall_status": "success" if all(
-                self.status[component]["status"] == "completed"
-                for component in self.execution_order
-            ) else "error"
+            "overall_status": overall
         }
 
-async def main():
-    """
-    Main entry point for the Async Reconciliation V2
-    """
+async def main() -> Dict[str, Any]:
+    """Ponto de entrada assíncrono usado pelo script principal."""
     engine = AsyncReconciliationEngine()
     result = await engine.run_reconciliation()
+    report = engine.get_status_report()
 
-    # Print status report
-    status_report = engine.get_status_report()
-    logger.info("Reconciliation Status Report:")
-    logger.info(f"Overall Status: {status_report['overall_status']}")
-
-    for component, details in status_report["status"].items():
-        logger.info(f"{component}: {details['status']}")
+    logger.info("=== Relatório de Reconciliação ===")
+    logger.info(f"Overall Status: {report['overall_status']}")
+    for comp, details in report["status"].items():
+        logger.info(f"{comp}: {details['status']}")
         if details["error"]:
-            logger.error(f"  Error: {details['error']}")
+            logger.error(f"  Erro: {details['error']}")
         if details["details"]:
-            logger.info(f"  Details: {details['details']}")
+            logger.info(f"  Detalhes: {details['details']}")
 
     return result
 

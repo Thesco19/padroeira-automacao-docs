@@ -5,6 +5,14 @@
 - [x] Fase 2: Engine Consolidação (engine_consolidacao.py)
 - [x] Fase 3: Motor Balancete (motor_balancete.py)
 
+## Validações Reais Executadas
+
+✅ **Competência 2606 (Junho/2026) validada com sucesso na pasta `testes/` (Rodada Real 2606):**
+- **Engine Consolidacao:** Expansão horizontal, espelhamento vertical com Sangria, preservação de fórmulas
+- **Motor Balancete:** Auditoria por faturamento (linha 37), mapeamento da Sangria (Coluna R), isolamento da Coluna Q, *validado com sucesso na rodada real de 2606*.
+- **Bug do float corrigido:** Método `_to_float()` implementado para tratamento seguro de valores
+- **Dados de produção:** Testes realizados contra cópias dos arquivos reais do Box (`~/box_lab/`)
+
 ## Resumo do Projeto
 
 **Arquitetura de Reconciliação Assíncrona V2 implementada com sucesso!**
