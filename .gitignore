@@ -2,3 +2,8 @@ lab_agente_web/venv/
 .venv/
 *.log
 .aider*
+__pycache__/
+*.pyc
+*.swp
+*.swo
+.DS_Store
