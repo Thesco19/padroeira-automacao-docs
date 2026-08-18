@@ -65,6 +65,19 @@ Durante a execução inicial, foram identificadas três anomalias críticas no p
 
 ---
 
+## 6. Histórico de Curadoria e Conexão de Conhecimento
+
+- **Origem:** Inbox (`00-Inbox/_test/curator-test.md`).
+- **Tema:** Teste da curadoria e conexão entre conhecimento do ecossistema do projeto `Padroeira-aut-v1`.
+- **Status:** Teste concluído e conhecimento integrado ao Vault.
+
+- **Validação Final (`final-test.md`):**
+  - **Origem:** Inbox (`00-Inbox/_test/final-test.md`).
+  - **Tema:** Teste de fluxo completo do Knowledge Curator para o projeto [[Padroeira-aut-v1]].
+  - **Status:** Concluído e integrado ao Vault em 2026-08-18.
+
+---
+
 ## Documentos & Links Relacionados
 
 - [[Agentes-do-Laboratorio]]
