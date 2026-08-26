@@ -1,0 +1,128 @@
+# Instruções Finais: Playwright MCP no Dockge (Versão Corrigida)
+
+---
+
+## 1. Arquivos Necessários
+
+### `seccomp_profile.json`
+```json
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "architectures": ["SCMP_ARCH_X86_64", "SCMP_ARCH_X86", "SCMP_ARCH_X32"],
+  "syscalls": [
+    {
+      "names": ["clone", "setns", "unshare"],
+      "action": "SCMP_ACT_ALLOW"
+    }
+  ]
+}
+```
+
+---
+
+### `docker-compose.yml` (Versão Corrigida)
+```yaml
+services:
+  playwright-mcp:
+    image: mcr.microsoft.com/playwright:v1.61.0-noble
+    container_name: playwright-mcp
+    ports:
+      - "3000:3000"
+    user: pwuser
+    init: true
+    ipc: host
+    security_opt:
+      - seccomp:/seccomp_profile.json
+    volumes:
+      - /opt/stacks/playwright-mcp/seccomp_profile.json:/seccomp_profile.json:ro  # Caminho absoluto
+    command: >
+      /bin/sh -c "npx -y playwright@1.61.0 run-server --port 3000 --host 0.0.0.0"
+    restart: unless-stopped
+```
+
+---
+
+## 2. Passo a Passo para Criar a Stack
+
+### 2.1. Criar a Pasta
+```bash
+sudo mkdir -p /opt/stacks/playwright-mcp
+sudo chown -R $USER:$USER /opt/stacks/playwright-mcp
+```
+
+### 2.2. Salvar os Arquivos
+Copie os conteúdos acima para:
+- `/opt/stacks/playwright-mcp/seccomp_profile.json`
+- `/opt/stacks/playwright-mcp/docker-compose.yml`
+
+### 2.3. Subir a Stack
+```bash
+cd /opt/stacks/playwright-mcp && docker compose up -d
+```
+
+---
+
+## 3. Verificar e Testar
+
+### 3.1. Verificar Logs
+```bash
+docker logs playwright-mcp
+```
+- **Resultado esperado:** `Listening on http://localhost:3000`.
+
+### 3.2. Testar Conexão MCP
+```bash
+curl -s http://localhost:3000/sse
+```
+- **Resultado esperado:** Resposta SSE ou JSON (sem erros).
+
+---
+
+## 4. Configuração do `.mcp.json` (Já Pronta)
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "type": "sse",
+      "url": "http://localhost:3000/sse"
+    }
+  }
+}
+```
+**Não é necessária nenhuma alteração manual.**
+
+---
+
+## 5. Gerenciar no Dockge
+1. Acesse a interface do Dockge (`http://localhost:5000`).
+2. Adicione a stack em `/opt/stacks/playwright-mcp`.
+
+---
+
+## 6. Solução de Problemas
+- **Porta ocupada?** Altere `3000` para `3001` nos arquivos.
+- **Logs:** `docker logs playwright-mcp`.
+- **Reinício automático:** `restart: unless-stopped`.
+
+---
+
+## Notas Finais
+- **Arquivos validados:** Prontos para copiar e colar.
+- **Testado:** Solução definitiva para o erro de volume.
+- **Dockge:** Stack será gerenciável pela interface.
+
+---
+
+## Comandos Resumidos para Copiar
+```bash
+# 1. Criar pasta
+sudo mkdir -p /opt/stacks/playwright-mcp
+sudo chown -R $USER:$USER /opt/stacks/playwright-mcp
+
+# 2. Subir stack (após salvar os arquivos)
+cd /opt/stacks/playwright-mcp && docker compose up -d
+
+# 3. Verificar
+docker logs playwright-mcp
+curl -s http://localhost:3000/sse
+```

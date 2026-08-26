@@ -16,4 +16,42 @@ __pycache__/
 *.sqlite3
 *.zip
 *.bak
+# arquivos de senha/credencial (ex.: omni_pwd.txt com API_KEY_BEARER)
+*_pwd*.txt
+*password*.txt
+*credencial*.txt
+
+# Metadados de ferramentas de IA (não são código do projeto)
+.agents/
+.claude/
+.codex-plugin/
+.cursorrules
+.mcp_context/
+.mcp.json.bak-*
+.coverage
+.project_facts.txt
+AGENTS.md
+AIDER.md
+CODEX.md
+GEMINI.md
+JCODE.md
+LAB.md
+LAB.yaml
+OPENCODE.md
+SUPERVISOR.md
+obsidian/inbox
+
+# Pasta '~' ( atalho solto de Google Drive ) — não versionar
+~/
+
+# Dados/conhecimento locais (Obsidian, archive) — fora do código
+archive/
+knowledge/00-Inbox/
+knowledge/03-Infraestrutura/
+knowledge/notas/
+
+# Labs (cada um tem repo/gerenciamento próprio ou é workspace separado)
+lab-a/
+lab-b/
+lab-z/
 

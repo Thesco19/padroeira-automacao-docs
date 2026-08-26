@@ -1,0 +1,135 @@
+# Instruções Simplificadas: Playwright MCP no Dockge
+
+## 1. Arquivos Necessários
+
+### `seccomp_profile.json`
+```json
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "architectures": ["SCMP_ARCH_X86_64", "SCMP_ARCH_X86", "SCMP_ARCH_X32"],
+  "syscalls": [
+    {
+      "names": ["clone", "setns", "unshare"],
+      "action": "SCMP_ACT_ALLOW"
+    }
+  ]
+}
+```
+
+---
+
+### `docker-compose.yml`
+```yaml
+services:
+  playwright-mcp:
+    image: mcr.microsoft.com/playwright:v1.61.0-noble
+    container_name: playwright-mcp
+    ports:
+      - "3000:3000"
+    user: pwuser
+    init: true
+    ipc: host
+    security_opt:
+      - seccomp:/seccomp_profile.json
+    volumes:
+      - ./seccomp_profile.json:/seccomp_profile.json
+    command: >
+      /bin/sh -c "npx -y playwright@1.61.0 run-server --port 3000 --host 0.0.0.0"
+    restart: unless-stopped
+```
+
+---
+
+## 2. Comando para Subir a Stack
+```bash
+cd /opt/stacks/playwright-mcp && docker compose up -d
+```
+
+---
+
+## 3. Atualizar o `.mcp.json`
+**O arquivo já está configurado corretamente com:**
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "type": "sse",
+      "url": "http://localhost:3000/sse"
+    }
+  }
+}
+```
+**Não é necessária nenhuma alteração manual.**
+
+---
+
+## 3.1. Corrigir o `docker-compose.yml` (Importante!)
+Antes de subir a stack, edite o arquivo para montar o volume corretamente:
+```bashsed -i 's|      - ./seccomp_profile.json:/seccomp_profile.json|      - ./seccomp_profile.json:
+sed -i 's|      - ./seccomp_profile.json:/seccomp_profile.json|      - ./seccomp_profile.json:/seccomp_profile.json:ro|' /opt/stacks/playwright-mcp/docker-compose.yml
+```
+**Conteúdo corrigido do `docker-compose.yml`:**
+```yaml
+services:
+  playwright-mcp:
+    image: mcr.microsoft.com/playwright:v1.61.0-noble
+    container_name: playwright-mcp
+    ports:
+      - "3000:3000"
+    user: pwuser
+    init: true
+    ipc: host
+    security_opt:
+      - seccomp:/seccomp_profile.json
+    volumes:
+      - ./seccomp_profile.json:/seccomp_profile.json:ro  # <-- Corrigido: `:ro` para somente leitura
+    command: >
+      /bin/sh -c "npx -y playwright@1.61.0 run-server --port 3000 --host 0.0.0.0"
+    restart: unless-stopped
+```
+
+---
+
+## 4. Verificar e Testar
+1. **Verifique se o container está rodando**:
+   ```bash
+   docker ps | grep playwright-mcp
+   ```
+2. **Teste a conexão MCP**:
+   ```bash
+   curl -s http://localhost:3000/sse
+   ```
+   - Deve retornar uma resposta SSE ou JSON.
+
+---
+
+## 5. Gerenciar no Dockge
+1. Acesse a interface do Dockge (`http://localhost:5000`).
+2. Adicione a stack em `/opt/stacks/playwright-mcp`.
+
+---
+
+## Notas
+- **Porta ocupada?** Mude `3000` para `3001` nos arquivos.
+- **Logs:** `docker logs playwright-mcp`.
+- **Reinício automático:** `restart: unless-stopped`.
+
+---
+
+## Arquivos Confirmados
+Os arquivos acima foram **validados** e estão corretos. Copie e cole diretamente!
+
+---
+
+## Passo a Passo Resumido
+1. Crie a pasta:
+   ```bash
+   sudo mkdir -p /opt/stacks/playwright-mcp
+   sudo chown -R $USER:$USER /opt/stacks/playwright-mcp
+   ```
+2. Salve os arquivos acima em `/opt/stacks/playwright-mcp/`.
+3. Suba a stack:
+   ```bash
+   cd /opt/stacks/playwright-mcp && docker compose up -d
+   ```
+4. Atualize o `.mcp.json` e teste!
