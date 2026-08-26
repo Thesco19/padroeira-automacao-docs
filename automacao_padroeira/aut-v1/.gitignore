@@ -1,0 +1,22 @@
+# Planilhas não devem ir para o Git (são geradas/atualizadas pelo pipeline)
+*.xlsx
+*.xls
+*.xlsm
+# travas do LibreOffice / Excel
+.~lock.*.xlsx#
+.~lock.*.xls#
+
+# Segurança — nunca versionar credenciais, dados ou artefatos locais
+.env
+*.env
+*.db
+*.sqlite
+*.sqlite3
+*.zip
+*.bak
+*.pyc
+__pycache__/
+*.log
+logs/
+backups_snapshots/
+files/
