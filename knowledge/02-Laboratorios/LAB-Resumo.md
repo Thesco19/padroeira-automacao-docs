@@ -1,6 +1,6 @@
 ---
 created: 2026-08-04
-updated: 2026-08-18
+updated: 2026-08-25
 tags: [laboratorio, atlas, estrutura, resumo]
 tipo: laboratorio-resumo
 ---
@@ -15,8 +15,8 @@ Construir um laboratório de Engenharia do Conhecimento orientado a IA, com mem�
 
 ## Infraestrutura Física & Hardware
 
-- **Servidor Principal (Headless):** Mac Mini (Intel Core i7-3615QM, 16GB RAM, Linux Mint / Ubuntu x86_64).
-- **Clientes de Operação:** Vaio Ubuntu, MX Linux.
+- **Servidor Principal (Headless):** Mac Mini (Intel Core i7-3615QM, 16GB RAM, Linux Mint / Ubuntu x86_64). Inventário: [[Inventario-Servidor-Lab-teco]].
+- **Estações de Operação:** Vaio Ubuntu `teco-vaio` (i7-2640M, 11GB RAM) — [[Inventario-Vaio-teco-vaio]]; MX Linux.
 - **Cliente de Consulta:** iPad (visualização e consulta do Vault).
 - **Diretório Raiz de Trabalho:** `/home/teco/work_out`
 
@@ -48,6 +48,13 @@ Construir um laboratório de Engenharia do Conhecimento orientado a IA, com mem�
 
 ---
 
+## Inventário de Infraestrutura (nós)
+
+- **Servidor Mac Mini (headless):** [[Inventario-Servidor-Lab-teco]] — hardware, Docker, rede, scripts.
+- **Estação Vaio (teco-vaio):** [[Inventario-Vaio-teco-vaio]] — IA local, Docker/Dockge, KVM/Vagrant/Metasploitable.
+
+---
+
 ## Governança Normativa
 
 - `LAB.md`: Regras gerais do laboratório e conduta de agentes.
@@ -66,3 +73,5 @@ Construir um laboratório de Engenharia do Conhecimento orientado a IA, com mem�
 - [[mcp-lab-universal-admin]]
 - [[ObSV-IMPLEMENTATION_PLAN]]
 - [[2026-07-27-governanca-atlas-supabase]]
+- [[Inventario-Servidor-Lab-teco]]
+- [[Inventario-Vaio-teco-vaio]]

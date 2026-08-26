@@ -15,6 +15,16 @@ Esta documentação é compartilhada entre todos os agentes humanos e de intelig
 
 ---
 
+## 🖥️ Infraestrutura & Inventário
+
+- **[[Inventario-Servidor-Lab-teco]]:** Inventário técnico do servidor Mac Mini (coleta 12/07/2026), reconstruído do NotebookLM Lab-teco.
+- **[[Inventario-Vaio-teco-vaio]]:** Inventário da estação Vaio `teco-vaio` (IA local, Docker/Dockge, KVM/Vagrant).
+- **[[Servidor-Docker-Containers]]:** Containers ativos/inativos, catálogo de serviços e stacks Docker Compose.
+- **[[Servidor-Docker-Recursos]]:** Imagens, volumes, redes Docker e arquivos Compose.
+- **[[Servidor-Scripts-Configs]]:** Scripts de inicialização e arquivos de configuração sensíveis.
+
+---
+
 ## 🛠️ Projetos
 
 - **[[Padroeira-aut-v1]]:** Automação de reconciliação fiscal e planilhas diárias do restaurante (`reconciliacao_fiscal_v2`).
