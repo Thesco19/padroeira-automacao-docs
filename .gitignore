@@ -1,2 +1,6 @@
 .aider*
 .env
+
+# Cópias de trabalho que serão removidas (não são a versão principal)
+arquivo/
+automacao_padroeira/aut-v0/
