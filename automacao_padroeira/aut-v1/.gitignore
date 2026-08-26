@@ -20,3 +20,11 @@ __pycache__/
 logs/
 backups_snapshots/
 files/
+
+# Dados, backups e ambientes de teste (não são a versão principal)
+fechamentos/
+_old/
+pad_prod_test/CODEX.md
+pad_prod_test/fechamentos/
+CODEX.md
+OPENCODE.md
