@@ -9,10 +9,13 @@ períodos AAMM, usando a extração SESSÃO ÚNICA do Saurus (reaproveitada do
 `extrator_saurus_sessao`, a versão comprovada que produziu 264/0 relatórios).
 
 Comandos:
-    /reconciliar [AAMM]   -> roda a reconciliação do período (ex: /reconciliar 2608).
-                             Sem AAMM, processa o backlog detectado no Movto_cx2.
-    /fechar [AAMM]       -> alias de compatibilidade para /reconciliar.
-    /amostra [N] [AAMM]  -> roda apenas N datas pendentes (default 3) — útil p/ teste e2e.
+    /finalizar [MMAA]    -> roda a reconciliação (Cortex -> Engine -> Balancete Pad).
+                             Sem MMAA, assume o dia de hoje (AAMM corrente).
+                             Se MMAA informado, faz a varredura completa do período.
+                             /reconciliar é mantido como alias de compatibilidade.
+    /fechar              -> envia o FATURAMENTO DO DIA (linha 37 "Real" do Diário),
+                             lido da coluna do dia de hoje no Movto_diario.AAMM.xlsx.
+    /amostra [N] [MMAA]  -> roda apenas N datas pendentes (default 3) — útil p/ teste e2e.
 
 Logs em tempo real: reconciliation.log é zerado a cada start (mode "w") e
 espelhado no stdout. Marcadores exatos exigidos pelo teste de produção:
@@ -28,6 +31,9 @@ import logging
 import os
 import re
 import sys
+from datetime import datetime
+
+from openpyxl import load_workbook
 
 # ----------------------------------------------------------------------
 # Logging: FileHandler (zera o arquivo a cada start) + StreamHandler, DEBUG.
@@ -96,12 +102,39 @@ bot = telebot.TeleBot(TOKEN_TELEGRAM)
 # ----------------------------------------------------------------------
 # Orquestração
 # ----------------------------------------------------------------------
+def _normalizar_aamm(texto_bruto: str) -> str:
+    """
+    Converte uma entrada de período para AAMM (%y%m).
+
+    Aceita:
+      - AAMM (ex: 2608)  -> direto
+      - MMAA (ex: 0826)  -> convertido (mês=0826[:2], ano=0826[2:])
+      - vazio/None       -> assume o período corrente (datetime.now)
+
+    Retorna sempre no formato %y%m.
+    """
+    if not texto_bruto:
+        return datetime.now().strftime("%y%m")
+    t = texto_bruto.strip()
+    # Se vier como MMAA (mês primeiro, ex: 0826), transpõe para AAMM.
+    # Heurística: se os 2 primeiros dígitos forem > 12, é AAMM; senão MMAA.
+    if re.fullmatch(r"\d{4}", t):
+        mm, aa = t[:2], t[2:]
+        if int(mm) > 12:
+            return t  # já estava em AAMM
+        return aa + mm  # vira AAMM
+    return t
+
+
 def _parse_aamm(texto: str):
-    """Extrai um AAMM (YYMM) do texto do comando, se houver."""
-    m = re.search(r"\b(\d{4})\b", texto)
+    """
+    Extrai o período do texto do comando (aceita AAMM ou MMAA).
+    Se não houver número de 4 dígitos, assume o período corrente (hoje).
+    """
+    m = re.search(r"\b(\d{4})\b", texto or "")
     if m:
-        return m.group(1)
-    return None
+        return _normalizar_aamm(m.group(1))
+    return _normalizar_aamm("")
 
 
 async def _rodar(aamm: str = None, limite: int = None) -> dict:
@@ -140,18 +173,93 @@ def _resumo(resultado: dict) -> str:
     return "\n".join(linhas)
 
 
+def _faturamento_do_dia() -> str:
+    """
+    Lê o FATURAMENTO DO DIA (linha 37 "Real" do Diário) da coluna correspondente
+    à data de hoje em Movto_diario.AAMM.xlsx (AAMM corrente) e monta a mensagem
+    para o comando /fechar.
+    """
+    hoje = datetime.now()
+    aamm = hoje.strftime("%y%m")
+    data_hoje = hoje.date()
+    caminho = os.path.join(WORK, f"Movto_diario.{aamm}.xlsx")
+    if not os.path.exists(caminho):
+        return (f"📊 Faturamento do dia {hoje.strftime('%d/%m/%Y')}\n"
+                f"⚠️ Diário do período {aamm} não encontrado ({os.path.basename(caminho)}). "
+                f"Rode /finalizar primeiro.")
+
+    try:
+        wb = load_workbook(caminho, data_only=True)
+        ws = wb.active
+        col_dia = None
+        for c in range(2, ws.max_column + 1):
+            v = ws.cell(row=1, column=c).value
+            if isinstance(v, datetime) and v.date() == data_hoje:
+                col_dia = c
+                break
+        if not col_dia:
+            wb.close()
+            return (f"📊 Faturamento do dia {hoje.strftime('%d/%m/%Y')}\n"
+                    f"⚠️ Coluna do dia de hoje não encontrada no Diário {aamm}. "
+                    f"O dia ainda não foi processado.")
+
+        def _val(linha, rotulo):
+            v = ws.cell(row=linha, column=col_dia).value
+            try:
+                v = float(v) if v not in (None, "") else None
+            except (ValueError, TypeError):
+                v = None
+            return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if v is not None else "—"
+        real = _val(37, "Real")
+        sistema = _val(38, "Sistema")
+        sangria = _val(42, "Sangria")
+        wb.close()
+        return (
+            f"📊 Faturamento do dia {hoje.strftime('%d/%m/%Y')}\n"
+            f"💰 Real (Caixa): {real}\n"
+            f"🧮 Sistema: {sistema}\n"
+            f"🔻 Sangria: {sangria}"
+        )
+    except Exception as e:
+        return f"📊 Faturamento do dia {hoje.strftime('%d/%m/%Y')}\n⚠️ Erro ao ler o Diário: {e}"
+
+
 # ----------------------------------------------------------------------
 # Handlers Telegram
 # ----------------------------------------------------------------------
-@bot.message_handler(commands=['reconciliar', 'fechar'])
-def cmd_reconciliar(message):
+@bot.message_handler(commands=['finalizar', 'reconciliar', 'fechar'])
+def cmd_finalizar(message):
+    """
+    Comando principal de reconciliação.
+
+    /finalizar [MMAA]  -> varredura completa do período se MMAA informado;
+                          se em branco, assume o dia de hoje (AAMM corrente).
+    /reconciliar       -> alias de compatibilidade (mantido).
+    /fechar            -> também é tratado aqui, MAS se vier SOZINHO (sem MMAA)
+                          envia o FATURAMENTO DO DIA em vez de rodar o pipeline.
+    """
     texto = message.text or ""
-    logger.info("[TELEGRAM] Comando recebido do usuário.")
-    aamm = _parse_aamm(texto)
     chat_id = message.chat.id
+    comando = (texto.split()[0].lstrip("/").lower() if texto.split() else "")
+
+    logger.info("[TELEGRAM] Comando recebido do usuário.")
+
+    # /fechar SEM período -> envia o faturamento do dia (não roda o pipeline)
+    if comando == "fechar" and not re.search(r"\b\d{4}\b", texto):
+        try:
+            resposta = _faturamento_do_dia()
+            bot.send_message(chat_id, resposta)
+            logger.info("[TELEGRAM] Faturamento do dia enviado ao usuário.")
+        except Exception as e:
+            logger.exception("[TELEGRAM] Erro ao enviar faturamento do dia")
+            bot.send_message(chat_id, f"⚠️ Erro ao obter faturamento: {e}")
+        return
+
+    aamm = _parse_aamm(texto)
+    escopo = "dia de hoje (AAMM corrente)" if not re.search(r"\b\d{4}\b", texto) else f"período {aamm} (varredura completa)"
 
     bot.reply_to(message, "🤖 Processando reconciliação Padroeira...\n"
-                          f"Período: {aamm or 'backlog do Movto_cx2'}")
+                          f"Escopo: {escopo}")
     try:
         resultado = asyncio.run(_rodar(aamm=aamm))
         resumo = _resumo(resultado)
@@ -167,21 +275,21 @@ def cmd_reconciliar(message):
 
 @bot.message_handler(commands=['amostra'])
 def cmd_amostra(message):
-    """/amostra [N] [AAMM] — processa apenas N datas pendentes (teste e2e)."""
+    """/amostra [N] [AAMM|MMAA] — processa apenas N datas pendentes (teste e2e)."""
     texto = message.text or ""
     logger.info("[TELEGRAM] Comando recebido do usuário.")
     partes = texto.split()
     limite = 3
     aamm = None
     for p in partes[1:]:
-        if p.isdigit() and limite is None and int(p) < 100:
+        if p.isdigit() and int(p) < 100:
             limite = int(p)
         elif re.fullmatch(r"\d{4}", p):
-            aamm = p
+            aamm = _normalizar_aamm(p)
     chat_id = message.chat.id
 
     bot.reply_to(message, f"🤖 Amostra de {limite} data(s) pendente(s) "
-                          f"(período: {aamm or 'backlog'})...")
+                          f"(período: {aamm or 'hoje/backlog'})...")
     try:
         resultado = asyncio.run(_rodar(aamm=aamm, limite=limite))
         resumo = _resumo(resultado)
@@ -200,9 +308,11 @@ def cmd_help(message):
     bot.reply_to(
         message,
         "Comandos disponíveis:\n"
-        "/reconciliar [AAMM] — roda a reconciliação (ex: /reconciliar 2608)\n"
-        "/fechar [AAMM] — alias de /reconciliar\n"
-        "/amostra [N] [AAMM] — roda N datas pendentes (teste e2e)\n"
+        "/finalizar [MMAA] — reconciliação completa do período (ex: /finalizar 0826).\n"
+        "   Sem data, processa o DIA DE HOJE.\n"
+        "/fechar — envia o FATURAMENTO DO DIA (linha 37 do Diário).\n"
+        "/reconciliar [AAMM] — alias de /finalizar.\n"
+        "/amostra [N] [MMAA] — roda N datas pendentes (teste e2e).\n"
     )
 
 
@@ -213,6 +323,6 @@ if __name__ == "__main__":
     logger.info("=" * 70)
     logger.info("Bot de Reconciliação Padroeira iniciado (modo escuta).")
     logger.info(f"Logs em tempo real: {LOGFILE}")
-    logger.info("Comandos: /reconciliar [AAMM]  |  /fechar [AAMM]  |  /amostra [N] [AAMM]")
+    logger.info("Comandos: /finalizar [MMAA]  |  /fechar (faturamento do dia)  |  /reconciliar [AAMM]  |  /amostra [N] [MMAA]")
     logger.info("=" * 70)
     bot.infinity_polling()
