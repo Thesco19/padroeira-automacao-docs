@@ -9,10 +9,12 @@ períodos AAMM, usando a extração SESSÃO ÚNICA do Saurus (reaproveitada do
 `extrator_saurus_sessao`, a versão comprovada que produziu 264/0 relatórios).
 
 Comandos:
-    /fechar              -> PRIMEIRO comando do operador: puxa o FATURAMENTO DO DIA
-                             (linha 37 "Real" do Diário), lê para a CONFERÊNCIA DE CAIXA
-                             e SALVA NO HISTÓRICO para uso futuro. Apenas leitura/gravação
-                             de histórico — não roda o pipeline nem toca o balancete.
+    /fechar              -> PRIMEIRO comando do operador: ENTRA no Saurus (Playwright),
+                             puxa o RELATÓRIO DE FECHAMENTO DO DIA, lê o faturamento para
+                             a CONFERÊNCIA DE CAIXA, ENVIA ao Telegram e SALVA o relatório
+                             (cache ./fechamentos/ + histórico JSON) para o /finalizar usar.
+                             Se o relatório do dia já estiver em cache, reaproveita sem
+                             reentrar no portal.
     /finalizar [MMAA]    -> CONCLUI o preenchimento e o transporte de dados
                              (Cortex -> Engine -> Balancete Pad). Sem MMAA, assume o dia
                              de hoje (AAMM corrente). Se MMAA informado, faz a varredura
@@ -35,8 +37,6 @@ import os
 import re
 import sys
 from datetime import datetime
-
-from openpyxl import load_workbook
 
 # ----------------------------------------------------------------------
 # Logging: FileHandler (zera o arquivo a cada start) + StreamHandler, DEBUG.
@@ -188,72 +188,93 @@ def _fmt_brl(v: float) -> str:
     return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def _ler_faturamento_do_dia() -> dict:
-    """
-    Lê o FATURAMENTO DO DIA (linha 37 "Real" do Diário) da coluna correspondente
-    à data de hoje em Movto_diario.AAMM.xlsx (AAMM corrente).
+def _fmt_num(s: str) -> float:
+    """Converte string de valor Saurus ('1.234,56' / '1234.56') em float."""
+    if s is None:
+        return 0.0
+    try:
+        return float(str(s).replace(".", "").replace(",", "."))
+    except (ValueError, TypeError):
+        return 0.0
 
-    Retorna um dict com a chave 'erro' (mensagem amigável) em caso de falha, ou:
-        {
-          'data': 'DD/MM/AAAA', 'aamm': 'AAMM',
-          'real': float|None, 'sistema': float|None, 'sangria': float|None,
-          'msg': str,            # mensagem pronta para o Telegram
-        }
-    O campo 'msg' já traz o texto formatado para a conferência de caixa.
+
+async def _fechar_dia() -> dict:
+    """
+    PRIMEIRO comando do operador (/fechar):
+      1. ENTRA no Saurus (Playwright) e puxa o relatório de fechamento do DIA DE HOJE.
+         Se o relatório do dia já estiver em cache (fechamento_caixa_{data}.txt),
+         reaproveita sem reentrar no portal.
+      2. LÊ o FATURAMENTO (total do fechamento) para a CONFERÊNCIA DE CAIXA.
+      3. ENVIA a mensagem de conferência para o Telegram.
+      4. SALVA o relatório (cache em ./fechamentos/ e histórico JSON) para ser
+         usado pelo comando seguinte (/finalizar), que o transporta para o Diário/PAD.
+
+    Retorna dict com 'erro' (mensagem) em falha, ou:
+        {'erro': None, 'data': 'DD/MM/AAAA', 'aamm': 'AAMM',
+         'entrou_saurus': bool, 'do_cache': bool, 'dados': {...}, 'msg': str}
     """
     hoje = datetime.now()
+    hoje_iso = hoje.strftime("%Y-%m-%d")
+    hoje_br = hoje.strftime("%d/%m/%Y")
     aamm = hoje.strftime("%y%m")
-    data_hoje = hoje.date()
-    data_str = hoje.strftime("%d/%m/%Y")
-    caminho = os.path.join(WORK, f"Movto_diario.{aamm}.xlsx")
 
-    if not os.path.exists(caminho):
-        msg = (f"📊 Faturamento do dia {data_str}\n"
-               f"⚠️ Diário do período {aamm} não encontrado ({os.path.basename(caminho)}). "
-               f"Rode /finalizar primeiro.")
-        return {"erro": msg, "data": data_str, "aamm": aamm,
-                "real": None, "sistema": None, "sangria": None, "msg": msg}
+    cortex = cortex_mod.CortexPadroeiraAsync(base_dir=WORK)
+    pasta = cortex.pasta_fechamentos
+    cache = os.path.join(pasta, f"fechamento_caixa_{hoje_iso}.txt")
 
-    try:
-        wb = load_workbook(caminho, data_only=True)
-        ws = wb.active
-        col_dia = None
-        for c in range(2, ws.max_column + 1):
-            v = ws.cell(row=1, column=c).value
-            if isinstance(v, datetime) and v.date() == data_hoje:
-                col_dia = c
-                break
-        if not col_dia:
-            wb.close()
-            msg = (f"📊 Faturamento do dia {data_str}\n"
-                   f"⚠️ Coluna do dia de hoje não encontrada no Diário {aamm}. "
-                   f"O dia ainda não foi processado.")
-            return {"erro": msg, "data": data_str, "aamm": aamm,
-                    "real": None, "sistema": None, "sangria": None, "msg": msg}
+    entrou_saurus = False
+    do_cache = os.path.exists(cache)
 
-        def _val(linha):
-            v = ws.cell(row=linha, column=col_dia).value
+    # 1) Entra no Saurus se não houver relatório do dia em cache.
+    if not do_cache:
+        if cortex._playwright_disponivel():
             try:
-                return float(v) if v not in (None, "") else None
-            except (ValueError, TypeError):
-                return None
-        real = _val(37)
-        sistema = _val(38)
-        sangria = _val(42)
-        wb.close()
+                from extrator_saurus_sessao import extrair_lote_saurus
+                logger.info(f"[SAURUS] Entrando no portal para puxar fechamento de {hoje_br}...")
+                ok, falhas = await extrair_lote_saurus(
+                    [hoje_iso], pasta, headless=cortex._headless_config(),
+                    on_progress=lambda i, tot, d, okp: logger.info(
+                        f"[PLAYWRIGHT] Baixando fechamento para a data {hoje_br} -> "
+                        f"{'OK' if okp else 'FALHA'}"
+                    ),
+                )
+                entrou_saurus = ok > 0
+                if entrou_saurus:
+                    logger.info(f"[SAURUS] Relatório de {hoje_br} baixado e salvo em {cache}")
+            except Exception as e:
+                logger.exception(f"[SAURUS] Falha ao entrar no portal Saurus para {hoje_br}")
+        else:
+            logger.warning("[SAURUS] Playwright indisponível — não foi possível entrar no Saurus.")
 
-        msg = (
-            f"📊 Faturamento do dia {data_str}\n"
-            f"💰 Real (Caixa): {_fmt_brl(real)}\n"
-            f"🧮 Sistema: {_fmt_brl(sistema)}\n"
-            f"🔻 Sangria: {_fmt_brl(sangria)}"
-        )
-        return {"erro": None, "data": data_str, "aamm": aamm,
-                "real": real, "sistema": sistema, "sangria": sangria, "msg": msg}
-    except Exception as e:
-        msg = f"📊 Faturamento do dia {data_str}\n⚠️ Erro ao ler o Diário: {e}"
-        return {"erro": msg, "data": data_str, "aamm": aamm,
-                "real": None, "sistema": None, "sangria": None, "msg": msg}
+    # 2) Lê o relatório (recém-baixado ou em cache).
+    dados = cortex.extrair_dados_saurus_por_data(hoje_iso)
+    if not dados:
+        msg = (f"📊 Faturamento do dia {hoje_br}\n"
+               f"⚠️ Não foi possível obter o relatório do Saurus para hoje "
+               f"(relatório ausente ou portal indisponível).")
+        return {"erro": msg, "data": hoje_br, "aamm": aamm,
+                "entrou_saurus": entrou_saurus, "do_cache": do_cache, "dados": None, "msg": msg}
+
+    # 3) Monta a mensagem de conferência de caixa (do relatório do Saurus).
+    total = _fmt_num(dados.get("total"))
+    dinheiro = _fmt_num(dados.get("dinheiro"))
+    credito = _fmt_num(dados.get("credito"))
+    debito = _fmt_num(dados.get("debito"))
+    clientes = dados.get("clientes", "0")
+    kg_ref = dados.get("kg_eq_ref")
+    kg_sob = dados.get("kg_eq_sob")
+
+    origem = "cache local" if do_cache else ("portal Saurus" if entrou_saurus else "relatório")
+    msg = (
+        f"📊 Faturamento do dia {hoje_br}\n"
+        f"💰 Faturamento (Total): {_fmt_brl(total)}\n"
+        f"💵 Dinheiro: {_fmt_brl(dinheiro)}  |  💳 Crédito: {_fmt_brl(credito)}  |  🏧 Débito: {_fmt_brl(debito)}\n"
+        f"🧾 Clientes (Qtd. vendas): {clientes}\n"
+        f"📦 Kg Equiv. Refeição: {kg_ref or '—'}  |  Sobremesa: {kg_sob or '—'}\n"
+        f"🔎 Fonte: {origem}"
+    )
+    return {"erro": None, "data": hoje_br, "aamm": aamm,
+            "entrou_saurus": entrou_saurus, "do_cache": do_cache, "dados": dados, "msg": msg}
 
 
 def _salvar_historico_faturamento(registro: dict) -> bool:
@@ -270,11 +291,17 @@ def _salvar_historico_faturamento(registro: dict) -> bool:
         if os.path.exists(HIST_FILE):
             with open(HIST_FILE, "r", encoding="utf-8") as f:
                 historico = json.load(f)
+        d = registro.get("dados") or {}
         historico[registro["data"]] = {
             "aamm": registro["aamm"],
-            "real": registro["real"],
-            "sistema": registro["sistema"],
-            "sangria": registro["sangria"],
+            "total": _fmt_num(d.get("total")),
+            "dinheiro": _fmt_num(d.get("dinheiro")),
+            "credito": _fmt_num(d.get("credito")),
+            "debito": _fmt_num(d.get("debito")),
+            "clientes": d.get("clientes"),
+            "kg_eq_ref": d.get("kg_eq_ref"),
+            "kg_eq_sob": d.get("kg_eq_sob"),
+            "entrou_saurus": registro.get("entrou_saurus", False),
             "salvo_em": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         with open(HIST_FILE, "w", encoding="utf-8") as f:
@@ -308,22 +335,25 @@ def cmd_finalizar(message):
 
     logger.info("[TELEGRAM] Comando recebido do usuário.")
 
-    # /fechar -> puxa faturamento, lê p/ conferência de caixa, salva no histórico.
+    # /fechar -> entra no Saurus, puxa relatório do dia, lê p/ conferência de
+    # caixa, envia e salva no histórico (para o /finalizar transportar depois).
     if comando == "fechar" and not re.search(r"\b\d{4}\b", texto):
         try:
-            reg = _ler_faturamento_do_dia()
+            reg = asyncio.run(_fechar_dia())
             bot.send_message(chat_id, reg["msg"])
             if reg.get("erro"):
                 logger.info("[TELEGRAM] Faturamento do dia enviado ao usuário (com aviso).")
             else:
                 salvou = _salvar_historico_faturamento(reg)
                 logger.info(
-                    f"[TELEGRAM] Faturamento do dia enviado e "
-                    f"{'salvo no histórico' if salvou else 'NÃO salvo (erro de histórico)'}."
+                    f"[TELEGRAM] Faturamento do dia enviado"
+                    f"{' (entrou no Saurus)' if reg.get('entrou_saurus') else ' (do cache)'}"
+                    f" e {'salvo no histórico' if salvou else 'NÃO salvo (erro de histórico)'}. "
+                    f"Relatório disponível para /finalizar."
                 )
         except Exception as e:
-            logger.exception("[TELEGRAM] Erro ao enviar faturamento do dia")
-            bot.send_message(chat_id, f"⚠️ Erro ao obter faturamento: {e}")
+            logger.exception("[TELEGRAM] Erro ao executar /fechar (Saurus)")
+            bot.send_message(chat_id, f"⚠️ Erro ao obter faturamento do Saurus: {e}")
         return
 
     aamm = _parse_aamm(texto)
@@ -379,10 +409,11 @@ def cmd_help(message):
     bot.reply_to(
         message,
         "Comandos disponíveis:\n"
-        "/fechar — puxa o FATURAMENTO DO DIA (linha 37 do Diário), lê para a "
-        "conferência de caixa e SALVA NO HISTÓRICO. Use este PRIMEIRO.\n"
+        "/fechar — ENTRA no Saurus, puxa o RELATÓRIO DO DIA, lê o faturamento para a "
+        "conferência de caixa, envia e SALVA o relatório. Use este PRIMEIRO.\n"
         "/finalizar [MMAA] — CONCLUI o preenchimento e o transporte de dados "
-        "(Cortex -> Engine -> Balancete). Sem data, processa o DIA DE HOJE.\n"
+        "(Cortex -> Engine -> Balancete) usando os relatórios baixados. "
+        "Sem data, processa o DIA DE HOJE.\n"
         "/reconciliar [AAMM] — alias de /finalizar.\n"
         "/amostra [N] [MMAA] — roda N datas pendentes (teste e2e).\n"
     )
@@ -395,6 +426,6 @@ if __name__ == "__main__":
     logger.info("=" * 70)
     logger.info("Bot de Reconciliação Padroeira iniciado (modo escuta).")
     logger.info(f"Logs em tempo real: {LOGFILE}")
-    logger.info("Comandos: /fechar (faturamento do dia -> historico)  |  /finalizar [MMAA]  |  /reconciliar [AAMM]  |  /amostra [N] [MMAA]")
+    logger.info("Comandos: /fechar (entra no Saurus -> relatorio do dia -> historico)  |  /finalizar [MMAA]  |  /reconciliar [AAMM]  |  /amostra [N] [MMAA]")
     logger.info("=" * 70)
     bot.infinity_polling()

@@ -26,12 +26,15 @@ Para subir o bot em modo escuta:
 *O script trava múltiplas instâncias (via `.bot_reconciliation.lock`) e gera logs em `logs/reconciliation.log`.*
 
 ### Comandos no Telegram (ordem de uso)
-1. **`/fechar`** — PRIMEIRO comando do operador. Puxa o **faturamento do dia** (linha 37 do Diário),
-   lê para a **conferência de caixa** (Real / Sistema / Sangria) e **salva no histórico**
-   (`historico_faturamento/faturamento_diario.json`) para uso futuro. Apenas leitura + histórico —
-   não roda pipeline nem toca o balancete.
+1. **`/fechar`** — PRIMEIRO comando do operador. **ENTRA no Saurus** (Playwright),
+   **puxa o relatório de fechamento do dia**, lê o faturamento para a
+   **conferência de caixa**, **envia** ao Telegram e **salva o relatório**
+   (cache em `fechamentos/fechamento_caixa_{data}.txt` + histórico em
+   `historico_faturamento/faturamento_diario.json`) para o `/finalizar` usar.
+   Se o relatório do dia já estiver em cache, reaproveita sem reentrar no portal.
 2. **`/finalizar [MMAA]`** — CONCLUI o preenchimento e o **transporte de dados**
-   (Cortex → Engine → Balancete PAD). Sem MMAA, processa o **dia de hoje**; com MMAA, faz a
+   (Cortex → Engine → Balancete PAD), consumindo os relatórios baixados pelo
+   `/fechar`. Sem MMAA, processa o **dia de hoje**; com MMAA, faz a
    **varredura completa** do período.
 3. **`/reconciliar [AAMM]`** — alias de `/finalizar` (mantido por compatibilidade).
 4. **`/amostra [N] [AAMM]`** — roda um teste e2e com `N` datas pendentes.
