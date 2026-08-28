@@ -181,6 +181,7 @@ class CortexPadroeiraAsync:
         # --- Quantidades unitárias e valores em R$ para o Kg Equivalente ---
         qtd_av = _num(r"REFEICAO A VONTADE\s+UN\s+([\d.,]+)")
         qtd_ts = _num(r"REFEICAO TO SAVE\s+UN\s+([\d.,]+)")
+        qtd_cs = _num(r"REFEICAO COM SOBREMESA\s+UN\s+([\d.,]+)")
         # PRATOS EXECUTIVOS e DOCES: valor em R$ na seção "SUBCATEGORIAS VENDIDAS".
         r_exec = re.search(r"PRATOS EXECUTIVOS\s+[\d.,]+\s+([\d.,]+)", conteudo)
         r_doces = re.search(r"\bDOCES\s+[\d.,]+\s+([\d.,]+)", conteudo)
@@ -189,14 +190,18 @@ class CortexPadroeiraAsync:
 
         # Preço do KG do dia (regra de dia da semana / override por data em config_precos).
         try:
-            from config_precos import valor_kg_dia
+            from config_precos import valor_kg_dia, REFEICAO_COM_SOBREMESA
             dt_dia = datetime.strptime(data_str, "%Y-%m-%d").date()
             vkg = valor_kg_dia(dt_dia)
         except Exception:
             vkg = 96.90  # fallback conservador (padrão dias úteis)
+            REFEICAO_COM_SOBREMESA = 73.90
 
         # --- Kg Equivalente: Refeição (linha 3) ---
-        fat_ref = (peso_buf * vkg) + (qtd_av or 0.0) * 63.90 + (qtd_ts or 0.0) * 13.90 + val_exec
+        # Inclui REFEIÇÃO COM SOBREMESA (un), que antes era ignorada — valor fixo
+        # unitário desse item soma ao equivalente do dia. (rega: vkrisma 03 e 07/08)
+        fat_ref = (peso_buf * vkg) + (qtd_av or 0.0) * 63.90 + (qtd_ts or 0.0) * 13.90 \
+            + (qtd_cs or 0.0) * float(REFEICAO_COM_SOBREMESA) + val_exec
         kg_eq_ref = fat_ref / vkg if vkg else 0.0
         # --- Kg Equivalente: Sobremesa / Doces (linha 4) ---
         fat_sob = (peso_sob * vkg) + val_doces
@@ -347,6 +352,49 @@ class CortexPadroeiraAsync:
             return False
 
     # ------------------------------------------------------------------
+    # Detecção de pendências de EXTRAÇÃO (coluna existe, falta Saurus)
+    # ------------------------------------------------------------------
+    def _datas_sem_metricas_saurus(self, aamm_alvo: str) -> List[str]:
+        """
+        Datas cuja coluna JÁ existe no Movto_diario.{aamm} (o caixa foi
+        espelhado pelo Engine), MAS sem métricas do Saurus (linhas 3/4/5
+        vazias) e sem fechamento_caixa_{data}.txt em cache.
+
+        São pendentes de EXTRAÇÃO via Playwright: a paridade por presença de
+        coluna (cx2 - diario) não as pega, pois a coluna já existe. Sem esta
+        detecção, o mês "parece" 100% consolidado quando só o caixa entrou.
+        """
+        diario_path = os.path.join(self.base_dir, f"Movto_diario.{aamm_alvo}.xlsx")
+        if not os.path.exists(diario_path):
+            return []
+        wb = load_workbook(diario_path, data_only=True)
+        ws = wb.active
+        out = []
+        for _c, v in _iterar_cabecalho(ws, inicio=2):
+            if not isinstance(v, datetime):
+                continue
+            data_iso = v.strftime("%Y-%m-%d")
+            try:
+                if datetime.strptime(data_iso, "%Y-%m-%d").strftime("%y%m") != aamm_alvo:
+                    continue
+                if datetime.strptime(data_iso, "%Y-%m-%d").date() < DATA_MINIMA_PROCESSAMENTO:
+                    continue
+            except ValueError:
+                continue
+            # Já tem .txt no cache? Não é pendente de extração.
+            if os.path.exists(
+                os.path.join(self.pasta_fechamentos, f"fechamento_caixa_{data_iso}.txt")
+            ):
+                continue
+            # Linhas 3/4/5 preenchidas? Saurus já foi injetado.
+            col = _c
+            if any(ws.cell(row=ln, column=col).value not in (None, "") for ln in (3, 4, 5)):
+                continue
+            out.append(data_iso)
+        wb.close()
+        return out
+
+    # ------------------------------------------------------------------
     # Extração multi-data (async, com Playwright)
     # ------------------------------------------------------------------
     def _playwright_disponivel(self) -> bool:
@@ -380,40 +428,76 @@ class CortexPadroeiraAsync:
             return True
         return val.strip().lower() in ("1", "true", "yes", "on")
 
-    async def extrair_todos_pendentes(self, headless: bool = False) -> Dict[str, Optional[str]]:
+    async def extrair_todos_pendentes(self, headless: bool = False, limite: Optional[int] = None) -> Dict[str, Optional[str]]:
         """
         Para cada data em self.pendentes, extrai (ou lê cache) e armazena
         em self.dados_por_data. Retorna {data_str: caminho_arquivo ou None}.
+
+        As datas SEM cache são extraídas em UMA ÚNICA sessão de browser
+        (reaproveitando login — ver `extrator_saurus_sessao.extrair_lote_saurus`,
+        a versão comprovada que produziu 264/0 relatórios em 08/ago/2026).
+        Isso evita abrir/fechar o browser por data e disparar alarme de
+        segurança do portal.
+
+        Args:
+            headless: roda sem display (padrão True em servidor).
+            limite: se informado, restringe a amostra de datas a extrair
+                    (útil p/ testes e2e de 2-3 dias).
         """
         resultados: Dict[str, Optional[str]] = {}
+
+        # 1) Cache: datas que já têm .txt no disco
+        pendentes_extracao = []
         for dt in self.pendentes:
             cache = os.path.join(self.pasta_fechamentos, f"fechamento_caixa_{dt}.txt")
             if os.path.exists(cache):
                 logger.info(f"[cache] Fechamento já existe para {dt}: {os.path.basename(cache)}")
                 self.extrair_dados_saurus_por_data(dt)
                 resultados[dt] = cache
-                continue
+            else:
+                pendentes_extracao.append(dt)
 
-            # Tenta invocar o robô Playwright
-            if self._playwright_disponivel():
-                try:
-                    from pdv_saurus_extractor import extrair_fechamento_saurus
-                    logger.info(f"[playwright] Extraindo fechamento para {dt} via portal Saurus...")
-                    caminho = await extrair_fechamento_saurus(
-                        dt, self.pasta_fechamentos, headless=headless
-                    )
-                    if caminho:
-                        self.extrair_dados_saurus_por_data(dt)
-                        resultados[dt] = caminho
-                        continue
-                except Exception as e:
-                    logger.error(f"[playwright] Falha para {dt}: {e}")
+        if limite is not None and len(pendentes_extracao) > limite:
+            pendentes_extracao = pendentes_extracao[:limite]
 
-            # Fallback estático
-            dados = self.extrair_dados_saurus_por_data(dt)
-            resultados[dt] = None if dados is None else cache
+        # 2) Sessão única do Playwright para as datas pendentes
+        if pendentes_extracao and self._playwright_disponivel():
+            from extrator_saurus_sessao import extrair_lote_saurus
+            try:
+                ok, falhas = await extrair_lote_saurus(
+                    pendentes_extracao,
+                    self.pasta_fechamentos,
+                    headless=headless,
+                    on_progress=lambda i, tot, d, okp: logger.info(
+                        f"[PLAYWRIGHT] Baixando fechamento para a data "
+                        f"{self._fmt_data_br(d)} ({i}/{tot}) -> {'OK' if okp else 'FALHA'}"
+                    ),
+                )
+                logger.info(f"[PLAYWRIGHT] Lote concluído: {ok} OK, {falhas} falhas "
+                            f"de {len(pendentes_extracao)} datas.")
+            except Exception as e:
+                logger.error(f"[PLAYWRIGHT] Falha no lote do portal Saurus: {e}")
+
+        # 3) Pós-extração: parseia cada data (cache ou recém-baixada)
+        for dt in pendentes_extracao:
+            cache = os.path.join(self.pasta_fechamentos, f"fechamento_caixa_{dt}.txt")
+            if os.path.exists(cache):
+                self.extrair_dados_saurus_por_data(dt)
+                resultados[dt] = cache
+            else:
+                dados = self.extrair_dados_saurus_por_data(dt)
+                resultados[dt] = None if dados is None else cache
 
         return resultados
+
+    @staticmethod
+    def _fmt_data_br(data_iso: str) -> str:
+        """Converte '2026-08-04' -> '04/08/2026' para logs amigáveis."""
+        try:
+            from datetime import datetime as _dt
+            return _dt.strptime(data_iso, "%Y-%m-%d").strftime("%d/%m/%Y")
+        except Exception:
+            return data_iso
 
     # ------------------------------------------------------------------
     # Status

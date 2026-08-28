@@ -28,3 +28,9 @@ pad_prod_test/CODEX.md
 pad_prod_test/fechamentos/
 CODEX.md
 OPENCODE.md
+
+# Legados consolidados fora do diretório principal (não são a versão canônica)
+AUX/
+
+# Trava de runtime do bot (gerada ao iniciar)
+.bot_reconciliation.lock

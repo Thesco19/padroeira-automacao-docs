@@ -52,6 +52,27 @@ SEL_CHK_PRODUTOS   = "#contentBody_cadastro_cookie_fechamento_periodo_chkProduto
 SEL_CHK_CATEGORIAS = "#contentBody_cadastro_cookie_fechamento_periodo_chkCategorias"
 
 
+def _resolver_executable_path() -> Optional[str]:
+    """Resolve o binário do Chromium a usar.
+
+    Ordem: 1. PLAYWRIGHT_CHROMIUM_PATH (env/.env)  2. /usr/bin/chromium
+           3. None (Playwright usa o seu próprio download).
+
+    Fallback gracioso: retorna None se nenhum existir, NÃO quebra o launch.
+    (Confirmado em 08/ago/2026: headless do servidor já funciona com o default.)
+    """
+    cfg = _carregar_controle_amb()
+    candidatos = []
+    env_path = cfg.get("chromium_path") or os.environ.get("PLAYWRIGHT_CHROMIUM_PATH")
+    if env_path:
+        candidatos.append(env_path)
+    candidatos.append("/usr/bin/chromium")
+    for c in candidatos:
+        if c and os.path.exists(c):
+            return c
+    return None
+
+
 def _carregar_controle_amb() -> dict:
     """Lê .env (leve, sem python-dotenv) do diretório do script."""
     cfg = {
@@ -110,9 +131,15 @@ async def extrair_fechamento_saurus(
     out_path = os.path.join(pasta_saida, f"fechamento_caixa_{data_iso}.txt")
     os.makedirs(pasta_saida, exist_ok=True)
 
+    # Binário do Chromium: fallback gracioso (None = default do Playwright).
+    exe = _resolver_executable_path()
+    launch_kwargs = {"headless": headless}
+    if exe:
+        launch_kwargs["executable_path"] = exe
+
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=headless)
+            browser = await p.chromium.launch(**launch_kwargs)
             context = await browser.new_context()
             page = await context.new_page()
 

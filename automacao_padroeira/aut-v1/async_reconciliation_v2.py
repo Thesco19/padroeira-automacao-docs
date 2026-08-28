@@ -106,7 +106,7 @@ class AsyncReconciliationEngine:
     # ------------------------------------------------------------------
     # Componentes
     # ------------------------------------------------------------------
-    async def execute_cortex_padroeira(self, aamms: List[str]) -> Dict[str, Any]:
+    async def execute_cortex_padroeira(self, aamms: List[str], limite: Optional[int] = None) -> Dict[str, Any]:
         """
         Executa o preflight Cortex Padroeira (extração + paridade) para TODOS os
         períodos AAMM detectados.
@@ -123,20 +123,34 @@ class AsyncReconciliationEngine:
             logger.info("Iniciando componente Cortex Padroeira Async (preflight multi-data)")
 
             cortex = CortexPadroeiraAsync()
-            dados = cortex.extrair_dados_saurus()  # legado (status / compat)
+            dados = cortex.extrair_dados_saurus()  # legado (status / compat) — pode ser None
 
             # 0. Cache local SEMPRE: popula dados_por_data com todos os fechamentos
             # existentes, independente das datas pendentes do calendário. Isso é o
             # que garante a injeção das linhas 3/4/5 mesmo com colunas já presentes.
-            cortex.carregar_cache_fechamentos()
+            # Se o cache carregou > 0 fechamentos, há dados reais disponíveis — ainda
+            # que o 'fechamento_caixa.txt' legado (sem data) não exista.
+            n_cache = cortex.carregar_cache_fechamentos()
+            if not dados and n_cache > 0:
+                dados = {"cache_local": n_cache}
 
-            # 1. Paridade por período; acumula pendentes apenas do AAMM em análise
+            # 1. Paridade por período; acumula pendentes (coluna ausente no diário)
             todos_pendentes: set = set()
             paridade_ok = True
             for aamm in aamms:
                 ok = cortex.verificar_paridade_planilhas(aamm)
                 paridade_ok = paridade_ok and ok
                 todos_pendentes.update(cortex.pendentes)
+                # Datas cuja coluna JÁ existe (caixa espelhado) mas SEM métricas do
+                # Saurus (linhas 3/4/5 vazias) e sem .txt: pendentes de extração.
+                sem_saurus = cortex._datas_sem_metricas_saurus(aamm)
+                if sem_saurus:
+                    logger.info(
+                        f"[cortex] {len(sem_saurus)} data(s) com coluna no diário mas "
+                        f"sem métricas do Saurus (pendentes de extração), AAMM {aamm}: "
+                        f"{sem_saurus[:6]}{' ...' if len(sem_saurus) > 6 else ''}"
+                    )
+                todos_pendentes.update(sem_saurus)
             cortex.pendentes = sorted(todos_pendentes)
 
             # 2. Extração multi-data: roda apenas para datas pendentes SEM arquivo
@@ -152,7 +166,8 @@ class AsyncReconciliationEngine:
                 logger.info(f"[cortex] Datas pendentes sem cache local a extrair: {len(pendentes_sem_cache)}")
                 cortex.pendentes = pendentes_sem_cache
                 extracao = await cortex.extrair_todos_pendentes(
-                    headless=cortex._headless_config()
+                    headless=cortex._headless_config(),
+                    limite=limite,
                 )
                 extraidas = [d for d, p in extracao.items() if p]
                 logger.info(f"[cortex] Extração concluída: {len(extraidas)}/{len(extracao)} datas")
@@ -198,6 +213,7 @@ class AsyncReconciliationEngine:
     async def execute_engine_consolidacao(self, aamm: str, dados_cortex: Optional[Dict[str, Dict[str, str]]] = None) -> Dict[str, Any]:
         """Executa o Engine de Consolidação para um período AAMM."""
         try:
+            logger.info(f"[ENGINE] Injetando Kg Equivalente e Sangria (Linha 42) em Movto_diario.{aamm}.xlsx...")
             logger.info(f"Iniciando Engine Consolidacao Async para {aamm}")
             engine = EngineConsolidacaoAsync(aamm=aamm)
             result = engine.executar_motor_unificado(dados_cortex)
@@ -268,7 +284,7 @@ class AsyncReconciliationEngine:
     # ------------------------------------------------------------------
     # Orquestração
     # ------------------------------------------------------------------
-    async def run_reconciliation(self, aamm: Optional[str] = None) -> Dict[str, Any]:
+    async def run_reconciliation(self, aamm: Optional[str] = None, limite: Optional[int] = None) -> Dict[str, Any]:
         """
         Orquestra a execução dos componentes.
 
@@ -288,7 +304,7 @@ class AsyncReconciliationEngine:
         logger.info(f"Períodos AAMM a processar: {aamms}")
 
         # 2. Preflight Cortex multi-data (não-fatal) para TODOS os períodos
-        self.status["cortex_padroeira"] = await self.execute_cortex_padroeira(aamms)
+        self.status["cortex_padroeira"] = await self.execute_cortex_padroeira(aamms, limite=limite)
         logger.info(
             f"Cortex preflight: {self.status['cortex_padroeira']['status']}"
             f" - {self.status['cortex_padroeira'].get('error')}"
