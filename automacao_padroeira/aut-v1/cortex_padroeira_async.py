@@ -148,10 +148,17 @@ class CortexPadroeiraAsync:
         PRATOS EXECUTIVOS e DOCES, e calcula o "Kg Equivalente" das
         refeições (linha 3) e das sobremesas/doces (linha 4).
         """
-        dinheiro = re.search(r"DINHEIRO (\d+):\s+([\d.]+)", conteudo)
-        credito  = re.search(r"CRÉDITO (\d+):\s+([\d.]+)", conteudo)
-        debito   = re.search(r"DÉBITO (\d+):\s+([\d.]+)", conteudo)
-        total    = re.search(r"TOTAL (\d+):\s+([\d.,]+)", conteudo)
+        # Formato real dos relatórios Saurus: "DINHEIRO (14):  595.76" — o número
+        # entre parênteses é o contador de vendas daquela forma. Tornamos os
+        # parênteses + contador OPCIONAIS (podem não vir) e capturamos o VALOR após
+        # os dois pontos. Antes, a regex exigia "DINHEIRO 14:" sem parênteses e,
+        # como o relatório traz "(14)", o match quebrava e os valores financeiros
+        # (Total/Dinheiro/Crédito/Débito) caíam no default "0.00" — bug que afetava
+        # a injeção no Diário/PAD. (corrigido na sessão 2026-08-27)
+        dinheiro = re.search(r"DINHEIRO(?:\s+\(\d+\))?\s*:\s*([\d.]+)", conteudo)
+        credito  = re.search(r"CRÉDITO(?:\s+\(\d+\))?\s*:\s*([\d.]+)", conteudo)
+        debito   = re.search(r"DÉBITO(?:\s+\(\d+\))?\s*:\s*([\d.]+)", conteudo)
+        total    = re.search(r"TOTAL(?:\s+\(\d+\))?\s*:\s*([\d.,]+)", conteudo)
         clientes = re.search(r"Qtd\. Vendas\s+:\s+(\d+)", conteudo)
         # IMPORTANTE: podem existir VARIAS linhas "REFEICAO QUILO KG" / "SOBREMESA QUILO KG"
         # no mesmo fechamento (ex.: almoco + jantar). Por isso usamos findall + soma,
