@@ -9,12 +9,14 @@ períodos AAMM, usando a extração SESSÃO ÚNICA do Saurus (reaproveitada do
 `extrator_saurus_sessao`, a versão comprovada que produziu 264/0 relatórios).
 
 Comandos:
-    /finalizar [MMAA]    -> roda a reconciliação (Cortex -> Engine -> Balancete Pad).
-                             Sem MMAA, assume o dia de hoje (AAMM corrente).
-                             Se MMAA informado, faz a varredura completa do período.
-                             /reconciliar é mantido como alias de compatibilidade.
-    /fechar              -> envia o FATURAMENTO DO DIA (linha 37 "Real" do Diário),
-                             lido da coluna do dia de hoje no Movto_diario.AAMM.xlsx.
+    /fechar              -> PRIMEIRO comando do operador: puxa o FATURAMENTO DO DIA
+                             (linha 37 "Real" do Diário), lê para a CONFERÊNCIA DE CAIXA
+                             e SALVA NO HISTÓRICO para uso futuro. Apenas leitura/gravação
+                             de histórico — não roda o pipeline nem toca o balancete.
+    /finalizar [MMAA]    -> CONCLUI o preenchimento e o transporte de dados
+                             (Cortex -> Engine -> Balancete Pad). Sem MMAA, assume o dia
+                             de hoje (AAMM corrente). Se MMAA informado, faz a varredura
+                             completa do período. /reconciliar é mantido como alias.
     /amostra [N] [MMAA]  -> roda apenas N datas pendentes (default 3) — útil p/ teste e2e.
 
 Logs em tempo real: reconciliation.log é zerado a cada start (mode "w") e
@@ -27,6 +29,7 @@ espelhado no stdout. Marcadores exatos exigidos pelo teste de produção:
 
 import asyncio
 import importlib.util
+import json
 import logging
 import os
 import re
@@ -41,7 +44,12 @@ from openpyxl import load_workbook
 WORK = os.path.dirname(os.path.abspath(__file__))            # aut-v1 (raiz do projeto; xlsx de teste ficam aqui)
 PARENT = os.path.dirname(WORK)                                # automation_padroeira (pai)
 
+# Histórico de faturamento do dia (lido pelo /fechar, persistido para uso futuro).
+HIST_DIR = os.path.join(WORK, "historico_faturamento")
+HIST_FILE = os.path.join(HIST_DIR, "faturamento_diario.json")
+
 os.makedirs(os.path.join(WORK, "logs"), exist_ok=True)
+os.makedirs(HIST_DIR, exist_ok=True)
 LOGFILE = os.path.join(WORK, "logs", "reconciliation.log")
 
 logger = logging.getLogger("BotReconciliation")
@@ -173,20 +181,38 @@ def _resumo(resultado: dict) -> str:
     return "\n".join(linhas)
 
 
-def _faturamento_do_dia() -> str:
+def _fmt_brl(v: float) -> str:
+    """Formata um valor float como R$ com separadores pt-BR (vírgula decimal)."""
+    if v is None:
+        return "—"
+    return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _ler_faturamento_do_dia() -> dict:
     """
     Lê o FATURAMENTO DO DIA (linha 37 "Real" do Diário) da coluna correspondente
-    à data de hoje em Movto_diario.AAMM.xlsx (AAMM corrente) e monta a mensagem
-    para o comando /fechar.
+    à data de hoje em Movto_diario.AAMM.xlsx (AAMM corrente).
+
+    Retorna um dict com a chave 'erro' (mensagem amigável) em caso de falha, ou:
+        {
+          'data': 'DD/MM/AAAA', 'aamm': 'AAMM',
+          'real': float|None, 'sistema': float|None, 'sangria': float|None,
+          'msg': str,            # mensagem pronta para o Telegram
+        }
+    O campo 'msg' já traz o texto formatado para a conferência de caixa.
     """
     hoje = datetime.now()
     aamm = hoje.strftime("%y%m")
     data_hoje = hoje.date()
+    data_str = hoje.strftime("%d/%m/%Y")
     caminho = os.path.join(WORK, f"Movto_diario.{aamm}.xlsx")
+
     if not os.path.exists(caminho):
-        return (f"📊 Faturamento do dia {hoje.strftime('%d/%m/%Y')}\n"
-                f"⚠️ Diário do período {aamm} não encontrado ({os.path.basename(caminho)}). "
-                f"Rode /finalizar primeiro.")
+        msg = (f"📊 Faturamento do dia {data_str}\n"
+               f"⚠️ Diário do período {aamm} não encontrado ({os.path.basename(caminho)}). "
+               f"Rode /finalizar primeiro.")
+        return {"erro": msg, "data": data_str, "aamm": aamm,
+                "real": None, "sistema": None, "sangria": None, "msg": msg}
 
     try:
         wb = load_workbook(caminho, data_only=True)
@@ -199,29 +225,65 @@ def _faturamento_do_dia() -> str:
                 break
         if not col_dia:
             wb.close()
-            return (f"📊 Faturamento do dia {hoje.strftime('%d/%m/%Y')}\n"
-                    f"⚠️ Coluna do dia de hoje não encontrada no Diário {aamm}. "
-                    f"O dia ainda não foi processado.")
+            msg = (f"📊 Faturamento do dia {data_str}\n"
+                   f"⚠️ Coluna do dia de hoje não encontrada no Diário {aamm}. "
+                   f"O dia ainda não foi processado.")
+            return {"erro": msg, "data": data_str, "aamm": aamm,
+                    "real": None, "sistema": None, "sangria": None, "msg": msg}
 
-        def _val(linha, rotulo):
+        def _val(linha):
             v = ws.cell(row=linha, column=col_dia).value
             try:
-                v = float(v) if v not in (None, "") else None
+                return float(v) if v not in (None, "") else None
             except (ValueError, TypeError):
-                v = None
-            return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if v is not None else "—"
-        real = _val(37, "Real")
-        sistema = _val(38, "Sistema")
-        sangria = _val(42, "Sangria")
+                return None
+        real = _val(37)
+        sistema = _val(38)
+        sangria = _val(42)
         wb.close()
-        return (
-            f"📊 Faturamento do dia {hoje.strftime('%d/%m/%Y')}\n"
-            f"💰 Real (Caixa): {real}\n"
-            f"🧮 Sistema: {sistema}\n"
-            f"🔻 Sangria: {sangria}"
+
+        msg = (
+            f"📊 Faturamento do dia {data_str}\n"
+            f"💰 Real (Caixa): {_fmt_brl(real)}\n"
+            f"🧮 Sistema: {_fmt_brl(sistema)}\n"
+            f"🔻 Sangria: {_fmt_brl(sangria)}"
         )
+        return {"erro": None, "data": data_str, "aamm": aamm,
+                "real": real, "sistema": sistema, "sangria": sangria, "msg": msg}
     except Exception as e:
-        return f"📊 Faturamento do dia {hoje.strftime('%d/%m/%Y')}\n⚠️ Erro ao ler o Diário: {e}"
+        msg = f"📊 Faturamento do dia {data_str}\n⚠️ Erro ao ler o Diário: {e}"
+        return {"erro": msg, "data": data_str, "aamm": aamm,
+                "real": None, "sistema": None, "sangria": None, "msg": msg}
+
+
+def _salvar_historico_faturamento(registro: dict) -> bool:
+    """
+    Persiste o faturamento do dia no histórico (JSON) para uso futuro.
+
+    O registro é indexado pela data (DD/MM/AAAA) e sobrescreve o do mesmo dia.
+    Retorna True se salvou com sucesso.
+    """
+    if registro.get("erro"):
+        return False
+    try:
+        historico = {}
+        if os.path.exists(HIST_FILE):
+            with open(HIST_FILE, "r", encoding="utf-8") as f:
+                historico = json.load(f)
+        historico[registro["data"]] = {
+            "aamm": registro["aamm"],
+            "real": registro["real"],
+            "sistema": registro["sistema"],
+            "sangria": registro["sangria"],
+            "salvo_em": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        with open(HIST_FILE, "w", encoding="utf-8") as f:
+            json.dump(historico, f, ensure_ascii=False, indent=2)
+        logger.info(f"[HISTORICO] Faturamento de {registro['data']} salvo em {HIST_FILE}")
+        return True
+    except Exception:
+        logger.exception("[HISTORICO] Falha ao salvar faturamento no histórico")
+        return False
 
 
 # ----------------------------------------------------------------------
@@ -230,13 +292,15 @@ def _faturamento_do_dia() -> str:
 @bot.message_handler(commands=['finalizar', 'reconciliar', 'fechar'])
 def cmd_finalizar(message):
     """
-    Comando principal de reconciliação.
+    Handler único dos comandos de operação.
 
-    /finalizar [MMAA]  -> varredura completa do período se MMAA informado;
-                          se em branco, assume o dia de hoje (AAMM corrente).
-    /reconciliar       -> alias de compatibilidade (mantido).
-    /fechar            -> também é tratado aqui, MAS se vier SOZINHO (sem MMAA)
-                          envia o FATURAMENTO DO DIA em vez de rodar o pipeline.
+    /fechar            -> PRIMEIRO comando do operador. Puxa o faturamento do dia,
+                          lê para a CONFERÊNCIA DE CAIXA e SALVA NO HISTÓRICO.
+                          Apenas leitura + gravação de histórico (não roda pipeline).
+    /finalizar [MMAA]  -> CONCLUI o preenchimento e o transporte de dados
+                          (Cortex -> Engine -> Balancete Pad). Sem MMAA, assume o
+                          dia de hoje; com MMAA, varredura completa do período.
+    /reconciliar [MMAA]-> alias de compatibilidade de /finalizar.
     """
     texto = message.text or ""
     chat_id = message.chat.id
@@ -244,12 +308,19 @@ def cmd_finalizar(message):
 
     logger.info("[TELEGRAM] Comando recebido do usuário.")
 
-    # /fechar SEM período -> envia o faturamento do dia (não roda o pipeline)
+    # /fechar -> puxa faturamento, lê p/ conferência de caixa, salva no histórico.
     if comando == "fechar" and not re.search(r"\b\d{4}\b", texto):
         try:
-            resposta = _faturamento_do_dia()
-            bot.send_message(chat_id, resposta)
-            logger.info("[TELEGRAM] Faturamento do dia enviado ao usuário.")
+            reg = _ler_faturamento_do_dia()
+            bot.send_message(chat_id, reg["msg"])
+            if reg.get("erro"):
+                logger.info("[TELEGRAM] Faturamento do dia enviado ao usuário (com aviso).")
+            else:
+                salvou = _salvar_historico_faturamento(reg)
+                logger.info(
+                    f"[TELEGRAM] Faturamento do dia enviado e "
+                    f"{'salvo no histórico' if salvou else 'NÃO salvo (erro de histórico)'}."
+                )
         except Exception as e:
             logger.exception("[TELEGRAM] Erro ao enviar faturamento do dia")
             bot.send_message(chat_id, f"⚠️ Erro ao obter faturamento: {e}")
@@ -308,9 +379,10 @@ def cmd_help(message):
     bot.reply_to(
         message,
         "Comandos disponíveis:\n"
-        "/finalizar [MMAA] — reconciliação completa do período (ex: /finalizar 0826).\n"
-        "   Sem data, processa o DIA DE HOJE.\n"
-        "/fechar — envia o FATURAMENTO DO DIA (linha 37 do Diário).\n"
+        "/fechar — puxa o FATURAMENTO DO DIA (linha 37 do Diário), lê para a "
+        "conferência de caixa e SALVA NO HISTÓRICO. Use este PRIMEIRO.\n"
+        "/finalizar [MMAA] — CONCLUI o preenchimento e o transporte de dados "
+        "(Cortex -> Engine -> Balancete). Sem data, processa o DIA DE HOJE.\n"
         "/reconciliar [AAMM] — alias de /finalizar.\n"
         "/amostra [N] [MMAA] — roda N datas pendentes (teste e2e).\n"
     )
@@ -323,6 +395,6 @@ if __name__ == "__main__":
     logger.info("=" * 70)
     logger.info("Bot de Reconciliação Padroeira iniciado (modo escuta).")
     logger.info(f"Logs em tempo real: {LOGFILE}")
-    logger.info("Comandos: /finalizar [MMAA]  |  /fechar (faturamento do dia)  |  /reconciliar [AAMM]  |  /amostra [N] [MMAA]")
+    logger.info("Comandos: /fechar (faturamento do dia -> historico)  |  /finalizar [MMAA]  |  /reconciliar [AAMM]  |  /amostra [N] [MMAA]")
     logger.info("=" * 70)
     bot.infinity_polling()

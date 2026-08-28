@@ -34,3 +34,6 @@ AUX/
 
 # Trava de runtime do bot (gerada ao iniciar)
 .bot_reconciliation.lock
+
+# Histórico local de faturamento do dia (dado operacional, não versionado)
+historico_faturamento/
