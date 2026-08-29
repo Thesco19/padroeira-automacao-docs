@@ -26,7 +26,7 @@ from typing import Optional
 # Configurações sensíveis (lidas de .env, com defaults)
 # ----------------------------------------------------------------------
 DEFAULT_URL = "https://ands.retaguarda.app/padroeirarestaurante/sistema"
-DEFAULT_USER = "paulo"
+DEFAULT_USER = "Sandra"
 DEFAULT_PASS = "270471"
 
 # ----------------------------------------------------------------------
