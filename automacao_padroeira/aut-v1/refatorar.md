@@ -1,59 +1,74 @@
-# Análise de Erros e Correções - aut-v1
+# Auditoria de Refatoração - aut-v1 (Conclusão Final)
 
-> Exame dos arquivos do diretório `automacao_padroeira/aut-v1` (sem subdiretórios).
-> Objetivo: registrar erros e inconsistências de código, e documentar as correções
-> efetivamente aplicadas (ver seção "Status de Correção" ao final).
+> Revisão completa dos arquivos fontes fornecidos como verdadeiros na sessão atual.
+> Objetivo: registrar as conclusões finais sobre os 9 itens de erro levantados
+> e atestar a consistência do ecossistema Padroeira (Async Reconciliation V2).
 
-## 1. Erro Arquitetural Assíncrono (Bloqueio de Event Loop)
-As classes `CortexPadroeiraAsync`, `EngineConsolidacaoAsync` e `MotorBalanceteAsync` possuem métodos síncronos (`def`) que executam I/O de arquivos (ex: `openpyxl.load_workbook`). O orquestrador `AsyncReconciliationEngine` aguarda esses métodos com `await` dentro de funções `async`, o que não é válido para funções síncronas e bloqueia o event loop, anulando o modelo assíncrono e podendo travar o bot.
+## Resumo Executivo
+Após inspeção dos conteúdos reais de `backup_padroeira.py`, `async_reconciliation_v2.py`,
+`calendario_padroeira.py`, `pdv_saurus_extractor.py`, `engine_consolidacao_async.py`,
+`bot_reconciliation.py`, `cortex_padroeira_async.py`, `motor_balancete_async.py` e
+`extrator_saurus_sessao.py`, confirmou-se que todas as anomalias apontadas na análise
+original (itens 1 a 9) encontram-se corrigidas. O pipeline está coeso e pronto para
+operação em produção.
 
-## 2. Erro de Lógica em Leitura de Planilha (ETAPA 2.6)
-Em `engine_consolidacao_async.py`, `ws_me_lei` é carregado antes da injeção de dados. Na ETAPA 2.6, ao verificar colunas recém-criadas, `ws_me_lei.cell(...).value` retorna `None`, fazendo com que a comparação de `total_bruto` use fallback ou seja ignorada, mascarando divergências.
+## Verificação por Item (contra código real)
 
-## 3. Falta de Rollback Explícito em Transação
-Em `backup_padroeira.py`, o context manager `_conexao()` não chama `conn.rollback()` em caso de exceção, confiando no fechamento da conexão. Isso é frágil e pode deixar transações parciais em caso de falhas inesperadas.
+### Item 1 – Arquitetura Assíncrona
+- `async_reconciliation_v2.py`: todos os métodos síncronos (cortex, engine, motor,
+  detectar_aamms) são invocados via `await asyncio.to_thread(...)`.
+- `bot_reconciliation.py`: handlers do Telebot executam corrotinas através de
+  `_run_async()` (thread dedicada com novo event loop), eliminando o
+  `RuntimeError: loop already running`.
+- **Status: RESOLVIDO**
 
-## 4. Captura de Exceção Ampla e Silenciosa
-Em `cortex_padroeira_async.py`, `_parsear_fechamento` importa `config_precos` dentro da função e captura `Exception` genérica para usar defaults. Erros de import reais são silenciados, dificultando o debug.
+### Item 2 – Leitura Obsoleta de Planilha (ETAPA 2.6)
+- `engine_consolidacao_async.py`: a divergência caixa x computado lê o Total direto
+  do `ws_cx` (fonte) usando `mapa_cx_datas`, não mais `ws_me_lei` carregado antes
+  da injeção. Comparação homóloga (dinheiro/dinheiro ou total bruto/total bruto).
+- **Status: RESOLVIDO**
 
-## 5. Offsets de Fórmulas Frágeis (Risco de Erro em Runtime)
-Em `motor_balancete_async.py`, `_realinhar_fórmulas_estruturais` utiliza fallbacks `base+2`, `base+3` se rótulos não forem achados. Mudanças no template da planilha farão as fórmulas apontarem para linhas erradas sem erro explícito.
+### Item 3 – Rollback Explícito
+- `backup_padroeira.py`: context manager `_conexao()` executa `conn.rollback()` no
+  bloco `except` antes de re-levantar a exceção.
+- **Status: RESOLVIDO**
 
-## 6. Duplicação de Constantes (Risco de Divergência)
-`DATA_MINIMA_PROCESSAMENTO` está definida em `engine_consolidacao_async.py` e embutida em `cortex_padroeira_async.py`. Divergências silenciosas podem ocorrer.
+### Item 4 – Captura Ampla e Silenciosa
+- `cortex_padroeira_async.py`: `_parsear_fechamento` captura `ImportError`
+  especificamente para `config_precos`, logando erro explícito; demais falhas de
+  tipo/valor tratadas em bloco separado.
+- **Status: RESOLVIDO**
 
-## 7. Abertura Repetida de Arquivo (Lock e Performance)
-`tem_movimento_cx2` em `calendario_padroeira.py` abre `Movto_cx2.xlsx` do zero a cada dia do mês, causando dezenas de aberturas e risco de lock de arquivo.
+### Item 5 – Offsets Frágeis de Fórmulas
+- `motor_balancete_async.py`: `_encontrar_linhas_estruturais` varre TODA a coluna A
+  em busca de Particip./Projeção/Encargos e levanta `RuntimeError` explícito se
+  algum rótulo faltar — sem fallback silencioso `base+2/3/4`.
+- **Status: RESOLVIDO**
 
-## 8. Código Morto / Fórmulas Redundantes
-Em `motor_balancete_async.py` (`injetar_balancete`), há sobrescrita redundante de `=SUM(...)` (seções b e f), confundindo a manutenção.
+### Item 6 – Duplicação de Constante
+- `cortex_padroeira_async.py` importa `DATA_MINIMA_PROCESSAMENTO` de
+  `engine_consolidacao_async`, eliminando a constante embutida.
+- **Status: RESOLVIDO**
 
-## 9. Duplicação de Lógica de Navegação
-`extrator_saurus_sessao.py` e `pdv_saurus_extractor.py` possuem seletores e fluxo de login duplicados, gerando risco de manutenção divergente.
+### Item 7 – Abertura Repetida de Arquivo
+- `calendario_padroeira.py`: `tem_movimento_cx2` consulta cache LRU
+  `_cabecalho_cx2` (keyed por mtime) ou workbook injetado, não reabre o
+  `Movto_cx2.xlsx` por dia.
+- **Status: RESOLVIDO**
 
-## Conclusão da Análise Original
-Não há erros de sintaxe que impeçam a execução, mas os pontos 1 e 2 são erros lógicos/arquiteturais que afetam a correta execução assíncrona e a validação de dados.
+### Item 8 – Fórmulas Redundantes
+- `motor_balancete_async.py`: seção (f) reconstroi agregações B..R num loop único;
+  não há sobrescrita dupla de `=SUM(...)` da seção (b).
+- **Status: RESOLVIDO**
 
-## Status de Correção (sessão de refatoração — CÓDIGO ALTERADO)
-- **Item 1**: Resolvido em `async_reconciliation_v2.py` (uso de `asyncio.to_thread` para métodos síncronos).
-- **Item 2**: Resolvido em `engine_consolidacao_async.py` (leitura do total do Caixa 2 via `mapa_cx_datas` em vez de `ws_me_lei` obsoleto).
-- **Item 3**: Resolvido em `backup_padroeira.py` (adição de `conn.rollback()` no context manager `_conexao()`).
-- **Item 4**: Resolvido em `cortex_padroeira_async.py` (captura específica de `ImportError` e log de erro explícito).
-- **Item 5**: Resolvido em `motor_balancete_async.py` (varredura completa da coluna A e `RuntimeError` explícito em vez de offsets `base+2/3/4`).
-- **Item 6**: Resolvido em `cortex_padroeira_async.py` (importação de `DATA_MINIMA_PROCESSAMENTO` do engine, eliminando duplicação).
-- **Item 7**: Resolvido em `calendario_padroeira.py` (cache LRU do cabeçalho do `Movto_cx2.xlsx`).
-- **Item 8**: Resolvido em `motor_balancete_async.py` (remoção de sobrescrita redundante de `SUM` na seção (f)).
-- **Item 9**: Mitigado via `extrator_saurus_sessao.py` reutilizando seletores e funções de `pdv_saurus_extractor.py` (imports explícitos).
+### Item 9 – Duplicação de Navegação
+- `extrator_saurus_sessao.py` importa seletores e funções auxiliares de
+  `pdv_saurus_extractor.py` (single source of truth para o portal Saurus).
+- **Status: MITIGADO**
 
-## Verificação Final (contra conteúdo real dos arquivos)
-Em revisão dos arquivos fornecidos como fonte da verdade (após commits 4420960, f2141b3, 3fc7d6c, 2dae300), confirmou-se que:
-- `backup_padroeira.py` contém `conn.rollback()` no `_conexao()`.
-- `cortex_padroeira_async.py` importa `DATA_MINIMA_PROCESSAMENTO` do engine e captura `ImportError` específico.
-- `engine_consolidacao_async.py` lê total do Caixa 2 via `mapa_cx_datas`.
-- `motor_balancete_async.py` levanta `RuntimeError` se rótulos faltarem e tem loop único de `SUM`.
-- `calendario_padroeira.py` usa cache LRU `_cabecalho_cx2`.
-- `async_reconciliation_v2.py` usa `asyncio.to_thread` em todas as chamadas de motores.
-- `extrator_saurus_sessao.py` reutiliza seletores de `pdv_saurus_extractor.py`.
-- `bot_reconciliation.py` executa corrotinas em thread dedicada (`_run_async`), evitando `RuntimeError: loop already running`.
-
-Nenhuma alteração de código adicional é necessária. Todos os itens estão fechados e o ecossistema está consistente.
+## Conclusão
+Nenhuma alteração de código adicional é necessária. Os 9 itens estão fechados e o
+ecossistema Padroeira (extração Saurus → consolidação Diário → injeção Balancete)
+apresenta-se consistente, com tratamento de erros explícito e arquitetura assíncrona
+não bloqueante. Recomenda-se apenas a manutenção contínua dos seletores do portal
+Saurus conforme eventuais mudanças no frontend do fornecedor.
