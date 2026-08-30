@@ -31,10 +31,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # meses anteriores já estão fechados/conferidos manualmente.
 DATA_MINIMA_PROCESSAMENTO = datetime(2026, 6, 1).date()
 
-# ATENÇÃO: a linha 37 representa o total do caixa do dia (slips + dinheiro)
-# no Movto_diario.xlsx. Atualizado conforme confirmação do usuário em ago/2026.
-LINHA_TOTAL_CAIXA = 37
-
 def _encontrar_arquivo_base(prefixo: str, ignorar_templates: bool = True) -> Optional[str]:
     """
     Localiza o arquivo base mais recente de um prefixo no diretório local.
@@ -201,27 +197,46 @@ class EngineConsolidacaoAsync:
             # ==============================================================================
             datas_no_mensal = {}
             colunas_pendentes_de_carga = []
-            proxima_coluna_livre = 2
 
             # 1.1 Varre o Diário atual para entender o que já existe
+            # `primeira_coluna_livre` guarda a PRIMEIRA lacuna do cabeçalho (borda
+            # real da matriz), travando no primeiro None e NÃO no último. O bug
+            # anterior só atualizava `proxima_coluna_livre` enquanto este ainda era
+            # 2, capturando a *última* coluna vazia e gerando desalinhamento quando
+            # a coluna 2 aparecia vazia entre colunas preenchidas.
+            primeira_coluna_livre = None
             for col in range(2, ws_me_lei.max_column + 1):
                 v_data = ws_me_lei.cell(row=1, column=col).value
-                v_total = ws_me_lei.cell(row=24, column=col).value  # Linha de controle
+                v_total = ws_me_lei.cell(row=24, column=col).value  # Linha de controle (cache)
+                # CORREÇÃO P2 (refatorar.md 6d): openpyxl NÃO recalcula fórmulas. Se o
+                # XLSX nunca foi aberto no Excel, `data_only=True` devolve None para uma
+                # fórmula ainda não cacheada. Consultamos também o template
+                # (`ws_me`, data_only=False) para distinguir "fórmula sem cache" de
+                # "vazio real": se a linha 24 contiver uma FÓRMULA, tratamos a coluna
+                # como já povoada (não pendente), evitando re-injeção desnecessária e
+                # divergências falsas na ETAPA 2.6.
+                v_total_src = ws_me.cell(row=24, column=col).value
+                eh_formula_24 = isinstance(v_total_src, str) and v_total_src.strip().startswith("=")
 
                 if v_data:
                     dt_norm = self.normalizar_data(v_data)
                     if dt_norm:
                         datas_no_mensal[dt_norm] = col
-                        # Se o dia existe, mas a linha 24 está vazia/zerada, agenda para receber carga
-                        if v_total is None or float(v_total) == 0:
+                        # Se o dia existe, mas a linha 24 está vazia/zerada (e não é
+                        # fórmula não-cacheada), agenda para receber carga.
+                        if (v_total is None or float(v_total) == 0) and not eh_formula_24:
                             colunas_pendentes_de_carga.append(col)
 
-                # Identifica a borda da matriz para criar novas datas
-                if ws_me_lei.cell(row=1, column=col).value is None and proxima_coluna_livre == 2:
-                    proxima_coluna_livre = col
+                # Identifica a PRIMEIRA coluna livre (borda da matriz) para criar novas datas
+                if v_data is None and primeira_coluna_livre is None:
+                    primeira_coluna_livre = col
 
-            if proxima_coluna_livre == 2:
-                proxima_coluna_livre = ws_me_lei.max_column + 1
+            # Se a matriz já ocupa até o fim da planilha (sem lacuna), anexa após a última coluna.
+            proxima_coluna_livre = (
+                primeira_coluna_livre
+                if primeira_coluna_livre is not None
+                else ws_me_lei.max_column + 1
+            )
 
             # 1.2 Lê o Caixa 2 e separa as datas do mês ativo
             mes_alvo = int(self.aamm[2:])
@@ -386,16 +401,49 @@ class EngineConsolidacaoAsync:
             elif dados_cortex:
                 logger.info(f"[+] Nenhuma métrica Saurus a injetar para {self.aamm}.")
 
+            # Deduplicação de alvos de verificação pós-escrita.
+            # ETAPA 2 (loop de injeção) e ETAPA 2.5 (idempotente) ambas empilham
+            # alvos para as mesmas colunas, fazendo _verificar_pos_escrita rodar
+            # duas vezes para as mesmas células (redundante e sujeito a mascarar
+            # falhas). Mantém UMA entrada por coluna (a primeira, com os dados),
+            # preservando a cobertura de todas as colunas do mês-alvo.
+            _vistos: set = set()
+            alvos_dedup: List[Dict[str, Any]] = []
+            for _a in alvos_verificacao:
+                _c = _a.get("col_mensal")
+                if _c in _vistos:
+                    continue
+                _vistos.add(_c)
+                alvos_dedup.append(_a)
+            alvos_verificacao = alvos_dedup
+
             # ==============================================================================
             # ETAPA 2.6: DIVERGÊNCIA CAIXA x COMPUTADO (regra dos R$30)
             # ==============================================================================
-            # Caixa (Movto_cx2, slips+dinheiro) já foi espelhado para a linha
-            # LINHA_TOTAL_CAIXA do Diário. Computado (fechamento.txt/Saurus) vem
-            # de dados_cortex[data]['total']. Compara os dois e grava/alerta.
+            # CORREÇÃO P1 (refatorar.md): antes comparava-se a linha do Caixa
+            # (dinheiro/slips) com o TOTAL GERAL do Saurus (que engloba cartões,
+            # PIX, tickets...). Isso gerava divergências FALSAS e permanentes.
+            #
+            # Agora comparamos APENAS meios homólogos:
+            #   (a) DINHEIRO do Saurus  vs. DINHEIRO do Caixa 2 (linha 5 'Notas + Moeda',
+            #       espelhada para a linha 5 do Diário) — alerta primário.
+            #   (b) TOTAL BRUTO do Saurus (dinheiro+credito+debito) vs. TOTAL do Caixa 2
+            #       (linha 24 'Total', espelhada para a linha 24 do Diário) — conferência
+            #       do valor global do fechamento, sem misturar com cartões isolados.
+            #
+            # O alerta é disparado quando QUALQUER uma das comparações válidas
+            # ultrapassa LIMITE_DIVERGENCIA.
             divergencias_flagged = 0
             if dados_cortex:
                 mes_alvo = int(self.aamm[2:])
                 ano_alvo = 2000 + int(self.aamm[:2])
+
+                def _to_float(v):
+                    try:
+                        return float(v) if v not in (None, "") else None
+                    except (ValueError, TypeError):
+                        return None
+
                 for dt, col in datas_no_mensal.items():
                     if dt.month != mes_alvo or dt.year != ano_alvo:
                         continue
@@ -406,27 +454,52 @@ class EngineConsolidacaoAsync:
                     if not dados_dia:
                         continue  # dado indisponível na origem — não é divergência
 
-                    valor_caixa = ws_me.cell(row=LINHA_TOTAL_CAIXA, column=col).value
-                    try:
-                        valor_caixa = float(valor_caixa) if valor_caixa not in (None, "") else None
-                    except (ValueError, TypeError):
-                        valor_caixa = None
+                    # ---- Alvo (a): DINHEIRO ----
+                    # Diário linha 6 = "Dinheiro" (recebe o espelhamento do Cx2, que
+                    # traz o fechamento em dinheiro na mesma posição). Não usar a
+                    # linha 5 do Diário (ela é "Clientes").
+                    caixa_dinheiro = _to_float(ws_me.cell(row=6, column=col).value)
+                    saurus_dinheiro = _to_float(dados_dia.get("dinheiro"))
 
-                    valor_computado_raw = dados_dia.get("total")
-                    try:
-                        valor_computado = float(valor_computado_raw) if valor_computado_raw not in (None, "") else None
-                    except (ValueError, TypeError):
-                        valor_computado = None
+                    # ---- Alvo (b): TOTAL BRUTO unificado ----
+                    # Lê de ws_me_lei (data_only=True) para obter o valor cacheado da
+                    # fórmula da linha 24 (se for fórmula) — ler de ws_me (data_only=False)
+                    # devolveria a string da fórmula e quebraria o float. (refatorar.md 6d)
+                    caixa_total = _to_float(ws_me_lei.cell(row=24, column=col).value)  # Total do Cx2
+                    saurus_total_bruto = _to_float(dados_dia.get("total_bruto")) or (
+                        _to_float(dados_dia.get("dinheiro"))
+                        + _to_float(dados_dia.get("credito"))
+                        + _to_float(dados_dia.get("debito"))
+                    )
+
+                    # Escolhe o par de comparação válido: prioriza Dinheiro (homólogo),
+                    # cai no Total Bruto unificado se o dinheiro não estiver disponível.
+                    if caixa_dinheiro is not None and saurus_dinheiro is not None:
+                        valor_caixa, valor_computado = caixa_dinheiro, saurus_dinheiro
+                        base_cmp = "dinheiro"
+                    elif caixa_total is not None and saurus_total_bruto is not None:
+                        valor_caixa, valor_computado = caixa_total, saurus_total_bruto
+                        base_cmp = "total_bruto"
+                    else:
+                        valor_caixa, valor_computado, base_cmp = None, None, None
 
                     categoria = registrar_divergencia(
                         data_iso, valor_caixa, valor_computado, bot=bot, chat_id=chat_id
                     )
                     registrar_checkup_dia(
                         data_iso, categoria,
-                        detalhe=f"caixa={valor_caixa} computado={valor_computado}"
+                        detalhe=(
+                            f"base={base_cmp} caixa={valor_caixa} computado={valor_computado} "
+                            f"(dinheiro cx={caixa_dinheiro} saurus={saurus_dinheiro}; "
+                            f"total cx={caixa_total} saurus={saurus_total_bruto})"
+                        )
                     )
                     if categoria == "precisa_reconferencia":
                         divergencias_flagged += 1
+                        logger.warning(
+                            f"[divergencia] {data_iso}: base={base_cmp} "
+                            f"caixa={valor_caixa} computado={valor_computado}"
+                        )
 
                 if divergencias_flagged:
                     logger.warning(

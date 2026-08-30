@@ -178,6 +178,9 @@ def registrar_divergencia(
                         f"• Caixa (Movto_cx2): R$ {valor_caixa:.2f}\n"
                         f"• Computado (Saurus): R$ {valor_computado:.2f}\n"
                         f"• Diferença: R$ {diff:.2f} (limite R$ {LIMITE_DIVERGENCIA:.2f})\n\n"
+                        f"Comparação homologada (refatorar.md P1): DINHEIRO do caixa "
+                        f"x DINHEIRO do Saurus, ou TOTAL BRUTO unificado. Não compara "
+                        f"linha de caixa com o Total Geral do Saurus (que inclui cartões).\n\n"
                         f"Reconferência manual do caixa necessária."
                     ),
                     parse_mode="Markdown",

@@ -72,7 +72,8 @@ if not TOKEN_TELEGRAM:
         "Configure-o antes de iniciar o bot (nunca deixe o token hardcoded no código)."
     )
 
-bot = telebot.TeleBot(TOKEN_TELEGRAM)
+bot = None  # instanciado sob demanda em main(); evita objeto duplicado com
+             # bot_reconciliation.py (que cria o seu próprio bot no mesmo token).
 
 
 def _iterar_cabecalho(ws, inicio: int = 1):
@@ -155,10 +156,25 @@ class CortexPadroeiraAsync:
         # como o relatório traz "(14)", o match quebrava e os valores financeiros
         # (Total/Dinheiro/Crédito/Débito) caíam no default "0.00" — bug que afetava
         # a injeção no Diário/PAD. (corrigido na sessão 2026-08-27)
-        dinheiro = re.search(r"DINHEIRO(?:\s+\(\d+\))?\s*:\s*([\d.]+)", conteudo)
-        credito  = re.search(r"CRÉDITO(?:\s+\(\d+\))?\s*:\s*([\d.]+)", conteudo)
-        debito   = re.search(r"DÉBITO(?:\s+\(\d+\))?\s*:\s*([\d.]+)", conteudo)
-        total    = re.search(r"TOTAL(?:\s+\(\d+\))?\s*:\s*([\d.,]+)", conteudo)
+        #
+        # CORREÇÃO P1 (refatorar.md 2b): dinheiro/credito/debito usavam classe
+        # [\d.]+ (sem vírgula). Se o relatório vier em formato pt-BR com vírgula
+        # decimal (ex.: "DINHEIRO (14): 1.234,56"), capturava apenas "1.234" e
+        # quebrava a conversão — corrompendo justamente a comparação de DINHEIRO
+        # da ETAPA 2.6. Alinhamos à mesma classe [\d.,]+ do `total` e normalizamos
+        # com .replace(",", ".") antes do float.
+        _RE_VALOR = r"([\d.,]+)"
+
+        def _valor_financeiro(label: str) -> Optional[str]:
+            m = re.search(rf"{label}(?:\s+\(\d+\))?\s*:\s*{_RE_VALOR}", conteudo)
+            if not m:
+                return None
+            return m.group(1).replace(",", ".")
+
+        dinheiro = _valor_financeiro("DINHEIRO")
+        credito  = _valor_financeiro("CRÉDITO")
+        debito   = _valor_financeiro("DÉBITO")
+        total    = _valor_financeiro("TOTAL")
         clientes = re.search(r"Qtd\. Vendas\s+:\s+(\d+)", conteudo)
         # IMPORTANTE: podem existir VARIAS linhas "REFEICAO QUILO KG" / "SOBREMESA QUILO KG"
         # no mesmo fechamento (ex.: almoco + jantar). Por isso usamos findall + soma,
@@ -216,10 +232,11 @@ class CortexPadroeiraAsync:
 
         dados = {
             "data": data_str,
-            "dinheiro": dinheiro.group(1) if dinheiro else "0.00",
-            "credito":  credito.group(1)  if credito  else "0.00",
-            "debito":   debito.group(1)   if debito   else "0.00",
-            "total":    total.group(1).replace(",", ".")    if total    else "0.00",
+            "dinheiro": dinheiro if dinheiro else "0.00",
+            "credito":  credito  if credito  else "0.00",
+            "debito":   debito   if debito   else "0.00",
+            "total":    total if total else "0.00",
+            "total_bruto": total if total else "0.00",
             "clientes": clientes.group(1) if clientes else "0",
             "peso_buf": f"{peso_buf:.3f}",
             "peso_sob": f"{peso_sob:.3f}",
@@ -520,51 +537,62 @@ class CortexPadroeiraAsync:
 
 
 # ----------------------------------------------------------------------
-# Telegram Bot Handlers (mantidos para uso standalone com /fechar e /ok)
+# Telegram Bot Handlers (uso standalone com /fechar e /ok)
+#
+# IMPORTANTE (P1 - refatorar.md): o bot NÃO é instanciado no nível de módulo.
+# Antes, `bot = telebot.TeleBot(...)` era criado globalmente, e ao ser importado
+# por bot_reconciliation.py gerava um SEGUNDO objeto bot com o mesmo token
+# (além do que o próprio bot_reconciliation cria), duplicando handlers "mortos"
+# e conflitando com a escuta principal. Agora a instância e os handlers só
+# existem dentro de main(), que roda exclusivamente em __main__.
 # ----------------------------------------------------------------------
-cortex_async = CortexPadroeiraAsync()
+def main() -> None:
+    global bot
+    bot = telebot.TeleBot(TOKEN_TELEGRAM)
+    cortex_async = CortexPadroeiraAsync()
 
-@bot.message_handler(commands=['fechar'])
-def comando_fechar(message):
-    bot.reply_to(message, "🤖 *Córtex Lab:* Processando dados brutos do Saurus...")
-    dados = cortex_async.extrair_dados_saurus()
+    @bot.message_handler(commands=['fechar'])
+    def comando_fechar(message):
+        bot.reply_to(message, "🤖 *Córtex Lab:* Processando dados brutos do Saurus...")
+        dados = cortex_async.extrair_dados_saurus()
 
-    if not dados:
-        bot.reply_to(message, "❌ Erro: Arquivo 'fechamento_caixa.txt' não encontrado na pasta do laboratório.")
-        return
+        if not dados:
+            bot.reply_to(message, "❌ Erro: Arquivo 'fechamento_caixa.txt' não encontrado na pasta do laboratório.")
+            return
 
-    msg = (
-        f"📊 *FATURAMENTO TOTAL DO DIA*\n\n"
-        f"• DINHEIRO: R$ {dados['dinheiro']}\n"
-        f"• CRÉDITO: R$ {dados['credito']}\n"
-        f"• DÉBITO: R$ {dados['debito']}\n"
-        f"• *TOTAL DO SISTEMA: R$ {dados['total']}*\n\n"
-        f"⚖️ *Métricas Equivalentes (Automação):*\n"
-        f"• Refeição Quilo: {dados['peso_buf']} KG\n"
-        f"• Sobremesa Quilo: {dados['peso_sob']} KG\n"
-        f"• Número de Clientes: {dados['clientes']}\n\n"
-        f"✍️ Sandra, preencha o *Movto_cx2.xlsx* no PC.\n"
-        f"Quando terminar e salvar, digite */ok* aqui para consolidar!"
-    )
-    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+        msg = (
+            f"📊 *FATURAMENTO TOTAL DO DIA*\n\n"
+            f"• DINHEIRO: R$ {dados['dinheiro']}\n"
+            f"• CRÉDITO: R$ {dados['credito']}\n"
+            f"• DÉBITO: R$ {dados['debito']}\n"
+            f"• *TOTAL DO SISTEMA: R$ {dados['total']}*\n\n"
+            f"⚖️ *Métricas Equivalentes (Automação):*\n"
+            f"• Refeição Quilo: {dados['peso_buf']} KG\n"
+            f"• Sobremesa Quilo: {dados['peso_sob']} KG\n"
+            f"• Número de Clientes: {dados['clientes']}\n\n"
+            f"✍️ Sandra, preencha o *Movto_cx2.xlsx* no PC.\n"
+            f"Quando terminar e salvar, digite */ok* aqui para consolidar!"
+        )
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
+    @bot.message_handler(commands=['ok'])
+    def comando_ok(message):
+        bot.reply_to(message, "⚡ *Córtex Lab:* Comparando planilhas e checando paridade...")
 
-@bot.message_handler(commands=['ok'])
-def comando_ok(message):
-    bot.reply_to(message, "⚡ *Córtex Lab:* Comparando planilhas e checando paridade...")
+        if not cortex_async.verificar_paridade_planilhas():
+            bot.reply_to(message, "❌ Erro ao verificar paridade de planilhas.")
+            return
 
-    if not cortex_async.verificar_paridade_planilhas():
-        bot.reply_to(message, "❌ Erro ao verificar paridade de planilhas.")
-        return
+        if cortex_async.pendentes:
+            bot.send_message(message.chat.id, f"🔄 *Datas pendentes detectadas no Caixa 2:* {len(cortex_async.pendentes)} dia(s).")
+        else:
+            bot.send_message(message.chat.id, "✅ Paridade total encontrada! Nenhuma data nova detectada.")
 
-    if cortex_async.pendentes:
-        bot.send_message(message.chat.id, f"🔄 *Datas pendentes detectadas no Caixa 2:* {len(cortex_async.pendentes)} dia(s).")
-    else:
-        bot.send_message(message.chat.id, "✅ Paridade total encontrada! Nenhuma data nova detectada.")
+        bot.send_message(message.chat.id, "🚀 *Processo de reconciliação assíncrona iniciado!* Aguarde a conclusão...")
 
-    bot.send_message(message.chat.id, "🚀 *Processo de reconciliação assíncrona iniciado!* Aguarde a conclusão...")
+    logger.info("[*] LAB CÓRTEX (Async): Ativo e escutando o Telegram...")
+    bot.infinity_polling()
 
 
 if __name__ == "__main__":
-    logger.info("[*] LAB CÓRTEX (Async): Ativo e escutando o Telegram...")
-    bot.infinity_polling()
+    main()
