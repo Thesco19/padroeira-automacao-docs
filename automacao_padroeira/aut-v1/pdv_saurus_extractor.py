@@ -83,12 +83,15 @@ def _carregar_controle_amb() -> dict:
 
     Carrega url/user/pass (Saurus) E chromium_path (PLAYWRIGHT_CHROMIUM_PATH),
     usado por _resolver_executable_path para localizar o binário do Chromium.
+    Também carrega PLAYWRIGHT_HEADLESS para alinhar o modo headless com o
+    extrator_saurus_sessao (correção de inconsistência apontada em refatorar.md).
     """
     cfg = {
         "url": DEFAULT_URL,
         "user": DEFAULT_USER,
         "pass": DEFAULT_PASS,
         "chromium_path": None,
+        "headless": "true",  # default servidor/headless
     }
     env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if not os.path.exists(env_path):
@@ -111,6 +114,8 @@ def _carregar_controle_amb() -> dict:
                     cfg["pass"] = valor
                 elif chave_upp == "PLAYWRIGHT_CHROMIUM_PATH":
                     cfg["chromium_path"] = valor
+                elif chave_upp == "PLAYWRIGHT_HEADLESS":
+                    cfg["headless"] = valor
     except Exception as e:
         print(f"[pdv_saurus] Aviso ao ler .env: {e}")
     return cfg
@@ -119,7 +124,7 @@ def _carregar_controle_amb() -> dict:
 async def extrair_fechamento_saurus(
     data_iso: str,
     pasta_saida: str,
-    headless: bool = False,
+    headless: Optional[bool] = None,
     timeout_ms: int = 45000,
 ) -> Optional[str]:
     """
@@ -135,11 +140,16 @@ async def extrair_fechamento_saurus(
       6. Marca checkboxes (Produtos, Categorias)
       7. Gera relatório → captura popup → extrai texto
 
+    O parâmetro `headless` segue a mesma regra do extrator_saurus_sessao:
+    se None, é resolvido a partir de PLAYWRIGHT_HEADLESS no .env (default True).
     Retorna o caminho do arquivo salvo, ou None em caso de falha.
     """
     from playwright.async_api import async_playwright  # import tardio (playwright é opcional)
 
     cfg = _carregar_controle_amb()
+    # Resolve headless se não informado explicitamente (consistência com sessão única)
+    if headless is None:
+        headless = str(cfg.get("headless", "true")).strip().lower() in ("1", "true", "yes", "on")
     out_path = os.path.join(pasta_saida, f"fechamento_caixa_{data_iso}.txt")
     os.makedirs(pasta_saida, exist_ok=True)
 
@@ -230,5 +240,7 @@ if __name__ == "__main__":
     import sys
     data = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime("%Y-%m-%d")
     pasta = sys.argv[2] if len(sys.argv) > 2 else "fechamentos"
-    resultado = asyncio.run(extrair_fechamento_saurus(data, pasta, headless=False))
+    # Corrigido: usa headless=None para respeitar o .env (default True), evitando
+    # falha em servidor sem display (refatorar.md item 3).
+    resultado = asyncio.run(extrair_fechamento_saurus(data, pasta, headless=None))
     print(f"Resultado: {resultado}")
