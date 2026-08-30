@@ -14,8 +14,9 @@ a ausência (ex.: "dia X ausente, é domingo — provável fechado" vs
 "dia X ausente, dia útil — possível bug").
 """
 
+import functools
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 # ---------------------------------------------------------------------------
 # Feriados (NACIONAL fixo + MÓVEL) — usados APENAS como sinal auxiliar de log,
@@ -79,29 +80,90 @@ def tem_fechamento_caixa(base_dir: str, aamm: str, dia: int) -> bool:
     return os.path.exists(caminho)
 
 
-def tem_movimento_cx2(base_dir: str, aamm: str, dia: int) -> bool:
-    """True se o Movto_cx2.xlsx tem uma coluna com a data (ano/mês/dia)."""
-    if not _mes_valido(aamm):
-        return False
-    caminho = os.path.join(base_dir, "Movto_cx2.xlsx")
-    if not os.path.exists(caminho):
-        return False
-    ano = 2000 + int(aamm[:2])
-    mes = int(aamm[2:])
+# ---------------------------------------------------------------------------
+# Cache LRU do CABEÇALHO de datas do Movto_cx2.xlsx (Item 2 — refatorar.md).
+#
+# ANTES: cada dia validado do mês reabria o .xlsx do disco (load_workbook em
+# read_only + iteração da linha 1) -> dezenas de aberturas por varredura de mês.
+#
+# AGORA: o cabeçalho (conjunto de datas presente na linha 1) é carregado UMA
+# vez por arquivo (keyed por mtime+sig) e缓存 em LRU. `tem_movimento_cx2` passa
+# a apenas consultar o conjunto em memória. Quem já tem o workbook carregado
+# pode injetá-lo via `workbook=` (evita até o load).
+# ---------------------------------------------------------------------------
+@functools.lru_cache(maxsize=8)
+def _cabecalho_cx2(caminho: str, _mtime: float) -> frozenset:
+    """
+    Retorna o conjunto (imutável) de `date` presentes na linha 1 do Movto_cx2.
+    O `_mtime` é parte da chave do cache para invalidar quando o arquivo muda.
+    Em caso de erro de leitura, retorna conjunto vazio (seguro: 'não tem
+    movimento').
+    """
+    datas: set = set()
     try:
         from openpyxl import load_workbook
         wb = load_workbook(caminho, data_only=True, read_only=True)
-        ws = wb.active
-        for row in ws.iter_rows(min_row=1, max_row=1, min_col=2):
-            for cel in row:
-                v = cel.value
-                if isinstance(v, date):
-                    if v.year == ano and v.month == mes and v.day == dia:
-                        return True
-        wb.close()
+        try:
+            ws = wb.active
+            for row in ws.iter_rows(min_row=1, max_row=1, min_col=2):
+                for cel in row:
+                    v = cel.value
+                    # openpyxl devolve datetime.datetime para células de data;
+                    # normalizamos para date para a busca em memória ser consistente.
+                    if isinstance(v, datetime):
+                        datas.add(v.date())
+        finally:
+            wb.close()
     except Exception:
         pass
-    return False
+    return frozenset(datas)
+
+
+def _caminho_cx2(base_dir: str) -> str:
+    return os.path.join(base_dir, "Movto_cx2.xlsx")
+
+
+def tem_movimento_cx2(base_dir: str, aamm: str, dia: int, *, workbook=None) -> bool:
+    """
+    True se o Movto_cx2.xlsx tem uma coluna com a data (ano/mês/dia).
+
+    ITEM 2 (refatorar.md): aceita `workbook` já carregado (injeção, evita
+    reabrir o disco) OU usa cache LRU do cabeçalho (não reabre por dia).
+    """
+    if not _mes_valido(aamm):
+        return False
+    ano = 2000 + int(aamm[:2])
+    mes = int(aamm[2:])
+
+    # Modo injeção: workbook já carregado pelo chamador.
+    if workbook is not None:
+        try:
+            ws = workbook.active
+            for row in ws.iter_rows(min_row=1, max_row=1, min_col=2):
+                for cel in row:
+                    v = cel.value
+                    if isinstance(v, datetime):
+                        v = v.date()
+                    if isinstance(v, date) and v.year == ano and v.month == mes and v.day == dia:
+                        return True
+        except Exception:
+            pass
+        return False
+
+    # Modo cache LRU: carrega/aproveita o cabeçalho e consulta em memória.
+    caminho = _caminho_cx2(base_dir)
+    if not os.path.exists(caminho):
+        return False
+    try:
+        mtime = os.path.getmtime(caminho)
+    except OSError:
+        return False
+    datas = _cabecalho_cx2(caminho, mtime)
+    try:
+        return date(ano, mes, dia) in datas
+    except ValueError:
+        # Dia impossível para o mês (ex.: 30/02) — com certeza não há movimento.
+        return False
 
 
 def dia_eh_fechado(base_dir: str, aamm: str, dia: int) -> bool:

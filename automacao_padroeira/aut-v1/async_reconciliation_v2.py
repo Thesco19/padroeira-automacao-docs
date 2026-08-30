@@ -138,12 +138,14 @@ class AsyncReconciliationEngine:
             todos_pendentes: set = set()
             paridade_ok = True
             for aamm in aamms:
-                ok = cortex.verificar_paridade_planilhas(aamm)
+                # ITEM 1 (refatorar.md): verificar_paridade abre Diário + Caixa2
+                # (openpyxl). Offload por período para não travar o loop.
+                ok = await asyncio.to_thread(cortex.verificar_paridade_planilhas, aamm)
                 paridade_ok = paridade_ok and ok
                 todos_pendentes.update(cortex.pendentes)
                 # Datas cuja coluna JÁ existe (caixa espelhado) mas SEM métricas do
                 # Saurus (linhas 3/4/5 vazias) e sem .txt: pendentes de extração.
-                sem_saurus = cortex._datas_sem_metricas_saurus(aamm)
+                sem_saurus = await asyncio.to_thread(cortex._datas_sem_metricas_saurus, aamm)
                 if sem_saurus:
                     logger.info(
                         f"[cortex] {len(sem_saurus)} data(s) com coluna no diário mas "
@@ -165,7 +167,10 @@ class AsyncReconciliationEngine:
             if pendentes_sem_cache:
                 logger.info(f"[cortex] Datas pendentes sem cache local a extrair: {len(pendentes_sem_cache)}")
                 cortex.pendentes = pendentes_sem_cache
-                extracao = await cortex.extrair_todos_pendentes(
+                # ITEM 1 (refatorar.md): extração Playwright + I/O de arquivos é
+                # bloqueante — offload para thread do executor.
+                extracao = await asyncio.to_thread(
+                    cortex.extrair_todos_pendentes,
                     headless=cortex._headless_config(),
                     limite=limite,
                 )
@@ -216,7 +221,10 @@ class AsyncReconciliationEngine:
             logger.info(f"[ENGINE] Injetando Kg Equivalente e Sangria (Linha 42) em Movto_diario.{aamm}.xlsx...")
             logger.info(f"Iniciando Engine Consolidacao Async para {aamm}")
             engine = EngineConsolidacaoAsync(aamm=aamm)
-            result = engine.executar_motor_unificado(dados_cortex)
+            # ITEM 1 (refatorar.md): o openpyxl é síncrono e bloqueia o event loop.
+            # Offload para uma thread do executor para manter a escuta do Telegram
+            # responsiva enquanto o Diário é consolidado.
+            result = await asyncio.to_thread(engine.executar_motor_unificado, dados_cortex)
 
             if result["status"] == "success":
                 logger.info(f"Engine Consolidacao Async ({aamm}) concluído com sucesso")
@@ -251,7 +259,8 @@ class AsyncReconciliationEngine:
         try:
             logger.info(f"Iniciando Motor Balancete Async para {aamm}")
             motor = MotorBalanceteAsync(aamm=aamm)
-            result = motor.injetar_balancete()
+            # ITEM 1 (refatorar.md): leitura/gravação openpyxl pesada — offload p/ thread.
+            result = await asyncio.to_thread(motor.injetar_balancete)
 
             if result["status"] == "success":
                 logger.info(f"Motor Balancete Async ({aamm}) concluído com sucesso")
@@ -296,7 +305,9 @@ class AsyncReconciliationEngine:
         logger.info("Iniciando processo de Reconciliação Async V2")
 
         # 1. Detecta períodos AAMM a processar (backlog multi-período)
-        aamms = self.detectar_aamms(aamm)
+        # ITEM 1 (refatorar.md): detectar_aamms abre o Movto_cx2.xlsx (openpyxl) —
+        # offload para thread para não travar o loop enquanto varre ~16k colunas.
+        aamms = await asyncio.to_thread(self.detectar_aamms, aamm)
         if not aamms:
             logger.error("Nenhum período AAMM detectado no Movto_cx2.xlsx")
             return {"status": "error", "details": self.status, "reason": "no_aamms"}

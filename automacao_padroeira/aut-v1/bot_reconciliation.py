@@ -152,6 +152,38 @@ async def _rodar(aamm: str = None, limite: int = None) -> dict:
     return resultado
 
 
+def _run_async(coro):
+    """
+    Executa uma corrotina fora do loop do Telegram (handler síncrono).
+
+    CORREÇÃO P3 (refatorar.md 4c): os handlers do telebot são funções SÍNCRONAS.
+    Chamar `asyncio.run` direto levanta `RuntimeError: loop already running` se
+    já houver um loop ativo na thread (ex.: execução dentro de um runner async,
+    testes ou migração futura). Rodamos a corrotina numa THREAD dedicada com seu
+    próprio loop, o que é seguro em qualquer contexto.
+    """
+    import threading
+    resultado = {}
+    excecao = {}
+
+    def _wrapper():
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            resultado["valor"] = loop.run_until_complete(coro)
+        except Exception as e:  # captura para fora da thread
+            excecao["erro"] = e
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_wrapper, daemon=True)
+    t.start()
+    t.join()
+    if "erro" in excecao:
+        raise excecao["erro"]
+    return resultado.get("valor")
+
+
 def _limpar_processos_orfaos() -> dict:
     """
     Rotina de limpeza de subprocessos Playwright/Chromium residuais e de travas
@@ -383,7 +415,9 @@ async def _fechar_dia() -> dict:
         logger.warning("[SAURUS] Playwright indisponível — usando cache local (se houver) como fallback.")
 
     # 2) Lê o relatório (recém-baixado do portal ou, em fallback, do cache).
-    dados = cortex.extrair_dados_saurus_por_data(hoje_iso)
+    # ITEM 1 (refatorar.md): extrair_dados_saurus_por_data faz I/O de disco
+    # (lê o .txt do fechamento) — offload para thread do executor.
+    dados = await asyncio.to_thread(cortex.extrair_dados_saurus_por_data, hoje_iso)
     if not dados:
         msg = (f"📊 Faturamento do dia {hoje_br}\n"
                f"⚠️ Não foi possível obter o relatório do Saurus para hoje "
@@ -478,9 +512,15 @@ def cmd_finalizar(message):
 
     # /fechar -> entra no Saurus, puxa relatório do dia, lê p/ conferência de
     # caixa, envia e salva no histórico (para o /finalizar transportar depois).
-    if comando == "fechar" and not re.search(r"\b\d{4}\b", texto):
+    # CORREÇÃO P3 (refatorar.md 4a): /fechar é exclusivo do dia corrente e NÃO
+    # aceita argumentos. Antes, a condição `and not re.search(r"\b\d{4}\b", texto)`
+    # fazia "/fechar 2608" DESVIAR para a reconciliação (pois o regex encontrava
+    # dígitos e a cláusula falhava). Agora /fechar dispara o fluxo de fechamento
+    # sempre, independentemente de texto residual; a varredura por período fica
+    # restrita a /finalizar e /reconciliar.
+    if comando == "fechar":
         try:
-            reg = asyncio.run(_fechar_dia())
+            reg = _run_async(_fechar_dia())
             bot.send_message(chat_id, reg["msg"])
             if reg.get("erro"):
                 logger.info("[TELEGRAM] Faturamento do dia enviado ao usuário (com aviso).")
@@ -503,7 +543,7 @@ def cmd_finalizar(message):
     bot.reply_to(message, "🤖 Processando reconciliação Padroeira...\n"
                           f"Escopo: {escopo}")
     try:
-        resultado = asyncio.run(_rodar(aamm=aamm))
+        resultado = _run_async(_rodar(aamm=aamm))
         resumo = _resumo(resultado)
         bot.send_message(chat_id, resumo)
         logger.info("[TELEGRAM] Mensagem de resumo enviada ao usuário.")
@@ -537,7 +577,7 @@ def cmd_amostra(message):
     bot.reply_to(message, f"🤖 Amostra de {limite} data(s) pendente(s) "
                           f"(período: {aamm or 'hoje/backlog'})...")
     try:
-        resultado = asyncio.run(_rodar(aamm=aamm, limite=limite))
+        resultado = _run_async(_rodar(aamm=aamm, limite=limite))
         resumo = _resumo(resultado)
         bot.send_message(chat_id, resumo)
         logger.info("[TELEGRAM] Mensagem de resumo enviada ao usuário.")
