@@ -61,7 +61,8 @@ MAPA_DIARIO_PAD = {
     'N': 32,  # Pend.Dia
     'O': 33,  # Pend.Pg.
     'P': 36,  # Serviço
-    'Q': 37   # Mov/Dia (Real)
+    'Q': 37,  # Mov/Dia (Real)
+    'R': 42   # Sangria (Linha 42 do Diário; regra do CLAUDE.md: espelhada no Balancete)
 }
 
 # Rótulos estruturais que delimitam o fim da zona de dias no balancete.
@@ -112,7 +113,7 @@ class MotorBalanceteAsync:
                 linha_totais = r
                 break
         for r in range(2, fim_zona + 1):
-            for c in range(1, 17):
+            for c in range(1, 18):  # 1..17 (A..Q); coluna R (Sangria) é tratada abaixo
                 if r == linha_totais and c == 4:  # preserva total estrutural da coluna D
                     continue
                 ws.cell(row=r, column=c).value = None
@@ -120,6 +121,9 @@ class MotorBalanceteAsync:
             q = ws.cell(row=r, column=17).value
             if isinstance(q, str) and q.upper().startswith("=SUM(B"):
                 ws.cell(row=r, column=17).value = None
+            # Limpa a coluna R (Sangria) de dias anteriores para garantir idempotência
+            # (a Sangria é valor fixo transportado do Diário; não é fórmula de subtotal).
+            ws.cell(row=r, column=18).value = None
         wb.save(caminho)
 
     def _garantir_planilha_pad(self) -> str:
@@ -385,6 +389,9 @@ class MotorBalanceteAsync:
                 ws_pad.cell(row=r, column=17).value = None
 
             # (e) Grava os dias em ordem crescente, um por linha a partir da linha 2.
+            # Garante o cabeçalho da coluna R (Sangria) — regra do CLAUDE.md: sangria
+            # na Linha 42 do Diário deve ser espelhada no Balancete (coluna R).
+            ws_pad[f"R1"] = "Sangria"
             for i, dia in enumerate(dias_ordenados):
                 linha_destino = 2 + i
                 if ws_pad.cell(row=linha_destino, column=1).value is None:
@@ -405,7 +412,8 @@ class MotorBalanceteAsync:
             #     (linha_totais-1) quando não usado.
             ws_pad[f"D{linha_totais}"] = f"=SUM(D2:D{linha_ultimo_dia})"
             ws_pad[f"Q{linha_totais}"] = f"=SUM(Q2:Q{linha_ultimo_dia})"
-            for c in range(2, 18):
+            ws_pad[f"R{linha_totais}"] = f"=SUM(R2:R{linha_ultimo_dia})"  # Sangria (espelhada do Diário)
+            for c in range(2, 19):  # 2..18 (B..R) — inclui a coluna R (Sangria)
                 letra = get_column_letter(c)
                 ws_pad[f"{letra}{linha_totais}"] = f"=SUM({letra}2:{letra}{linha_ultimo_dia})"
             linha_slot_final = linha_totais - 1
