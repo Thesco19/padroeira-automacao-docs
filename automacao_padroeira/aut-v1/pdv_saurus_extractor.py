@@ -55,8 +55,13 @@ SEL_CHK_CATEGORIAS = "#contentBody_cadastro_cookie_fechamento_periodo_chkCategor
 def _resolver_executable_path() -> Optional[str]:
     """Resolve o binário do Chromium a usar.
 
-    Ordem: 1. PLAYWRIGHT_CHROMIUM_PATH (env/.env)  2. /usr/bin/chromium
-           3. None (Playwright usa o seu próprio download).
+    Ordem: 1. PLAYWRIGHT_CHROMIUM_PATH (env/.env, via _carregar_controle_amb)
+           2. /usr/bin/chromium  3. None (Playwright usa o seu próprio download).
+
+    CORREÇÃO P2 (refatorar.md): antes, _carregar_controle_amb só carregava
+    url/user/pass, então cfg.get("chromium_path") era sempre None e o caminho
+    definido como PLAYWRIGHT_CHROMIUM_PATH no .env nunca era lido (apenas via
+    env var do sistema). Agora o .env é lido corretamente.
 
     Fallback gracioso: retorna None se nenhum existir, NÃO quebra o launch.
     (Confirmado em 08/ago/2026: headless do servidor já funciona com o default.)
@@ -74,11 +79,16 @@ def _resolver_executable_path() -> Optional[str]:
 
 
 def _carregar_controle_amb() -> dict:
-    """Lê .env (leve, sem python-dotenv) do diretório do script."""
+    """Lê .env (leve, sem python-dotenv) do diretório do script.
+
+    Carrega url/user/pass (Saurus) E chromium_path (PLAYWRIGHT_CHROMIUM_PATH),
+    usado por _resolver_executable_path para localizar o binário do Chromium.
+    """
     cfg = {
         "url": DEFAULT_URL,
         "user": DEFAULT_USER,
         "pass": DEFAULT_PASS,
+        "chromium_path": None,
     }
     env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if not os.path.exists(env_path):
@@ -99,6 +109,8 @@ def _carregar_controle_amb() -> dict:
                     cfg["user"] = valor
                 elif chave_upp in ("SAURUS_PASS", "SAURUS_PASSWORD", "SAURUS_SENHA"):
                     cfg["pass"] = valor
+                elif chave_upp == "PLAYWRIGHT_CHROMIUM_PATH":
+                    cfg["chromium_path"] = valor
     except Exception as e:
         print(f"[pdv_saurus] Aviso ao ler .env: {e}")
     return cfg
