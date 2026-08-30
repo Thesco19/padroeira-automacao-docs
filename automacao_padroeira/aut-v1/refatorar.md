@@ -45,5 +45,15 @@ Não há erros de sintaxe que impeçam a execução, mas os pontos 1 e 2 são er
 - **Item 8**: Resolvido em `motor_balancete_async.py` (remoção de sobrescrita redundante de `SUM` na seção (f)).
 - **Item 9**: Mitigado via `extrator_saurus_sessao.py` reutilizando seletores e funções de `pdv_saurus_extractor.py` (imports explícitos).
 
-> Documento atualizado após aplicação das correções em todos os arquivos citados.
-> Nenhuma alteração pendente conhecida para os itens levantados.
+## Verificação Final (contra conteúdo real dos arquivos)
+Em revisão dos arquivos fornecidos como fonte da verdade (após commits 4420960, f2141b3, 3fc7d6c, 2dae300), confirmou-se que:
+- `backup_padroeira.py` contém `conn.rollback()` no `_conexao()`.
+- `cortex_padroeira_async.py` importa `DATA_MINIMA_PROCESSAMENTO` do engine e captura `ImportError` específico.
+- `engine_consolidacao_async.py` lê total do Caixa 2 via `mapa_cx_datas`.
+- `motor_balancete_async.py` levanta `RuntimeError` se rótulos faltarem e tem loop único de `SUM`.
+- `calendario_padroeira.py` usa cache LRU `_cabecalho_cx2`.
+- `async_reconciliation_v2.py` usa `asyncio.to_thread` em todas as chamadas de motores.
+- `extrator_saurus_sessao.py` reutiliza seletores de `pdv_saurus_extractor.py`.
+- `bot_reconciliation.py` executa corrotinas em thread dedicada (`_run_async`), evitando `RuntimeError: loop already running`.
+
+Nenhuma alteração de código adicional é necessária. Todos os itens estão fechados e o ecossistema está consistente.
