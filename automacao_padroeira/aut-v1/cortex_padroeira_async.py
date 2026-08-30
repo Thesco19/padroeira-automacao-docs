@@ -24,6 +24,7 @@ from openpyxl import load_workbook
 import logging
 
 from calendario_padroeira import dia_eh_fechado
+from engine_consolidacao_async import DATA_MINIMA_PROCESSAMENTO
 
 # Configure logging
 logging.basicConfig(
@@ -35,10 +36,10 @@ logger = logging.getLogger("CortexPadroeiraAsync")
 # Caminhos dinâmicos relativos ao próprio script (portável, sem hardcode).
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Data mínima de processamento: nada anterior a isso deve ser tocado pelo
+# Data mínima de processamento importada do engine para evitar duplicação
+# de constante (refatorar.md item 6). Nada anterior a isso é tocado pelo
 # pipeline, mesmo em uma reexecução "do zero" — meses anteriores já estão
 # fechados/conferidos manualmente e ficam fora de escopo.
-DATA_MINIMA_PROCESSAMENTO = datetime(2026, 6, 1).date()
 
 
 def _ler_env(chave: str, base_dir: str) -> Optional[str]:
@@ -216,8 +217,13 @@ class CortexPadroeiraAsync:
             from config_precos import valor_kg_dia, REFEICAO_COM_SOBREMESA
             dt_dia = datetime.strptime(data_str, "%Y-%m-%d").date()
             vkg = valor_kg_dia(dt_dia)
-        except Exception:
+        except ImportError as e:
+            logger.error(f"[AVISO] Falha ao importar config_precos: {e}")
             vkg = 96.90  # fallback conservador (padrão dias úteis)
+            REFEICAO_COM_SOBREMESA = 73.90
+        except (ValueError, TypeError) as e:
+            logger.warning(f"[AVISO] Falha ao obter valor_kg_dia para {data_str}: {e}")
+            vkg = 96.90
             REFEICAO_COM_SOBREMESA = 73.90
 
         # --- Kg Equivalente: Refeição (linha 3) ---

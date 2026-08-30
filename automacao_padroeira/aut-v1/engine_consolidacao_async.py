@@ -462,10 +462,13 @@ class EngineConsolidacaoAsync:
                     saurus_dinheiro = _to_float(dados_dia.get("dinheiro"))
 
                     # ---- Alvo (b): TOTAL BRUTO unificado ----
-                    # Lê de ws_me_lei (data_only=True) para obter o valor cacheado da
-                    # fórmula da linha 24 (se for fórmula) — ler de ws_me (data_only=False)
-                    # devolveria a string da fórmula e quebraria o float. (refatorar.md 6d)
-                    caixa_total = _to_float(ws_me_lei.cell(row=24, column=col).value)  # Total do Cx2
+                    # CORREÇÃO (refatorar.md item 2): ws_me_lei foi carregado ANTES da
+                    # injeção, logo sua linha 24 está obsoleta (None p/ colunas novas).
+                    # Lemos o Total diretamente da fonte (Caixa 2 / ws_cx) usando o
+                    # mapa de datas, evitando leitura obsoleta e dependência de cache
+                    # de fórmula não calculada pelo openpyxl.
+                    col_cx = mapa_cx_datas.get(dt)
+                    caixa_total = _to_float(ws_cx.cell(row=24, column=col_cx).value) if col_cx else None
                     saurus_total_bruto = _to_float(dados_dia.get("total_bruto")) or (
                         _to_float(dados_dia.get("dinheiro"))
                         + _to_float(dados_dia.get("credito"))
