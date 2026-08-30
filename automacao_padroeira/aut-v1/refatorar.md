@@ -32,3 +32,14 @@ Em `motor_balancete_async.py` (`injetar_balancete`), há sobrescrita redundante 
 
 ## Conclusão
 Não há erros de sintaxe que impeçam a execução, mas os pontos 1 e 2 são erros lógicos/arquiteturais que afetam a correta execução assíncrona e a validação de dados.
+
+## Status de Correção (sessão de refatoração)
+- **Item 1**: Resolvido em `async_reconciliation_v2.py` (uso de `asyncio.to_thread` para métodos síncronos).
+- **Item 2**: Resolvido em `engine_consolidacao_async.py` (leitura do total do Caixa 2 via `mapa_cx_datas` em vez de `ws_me_lei` obsoleto).
+- **Item 3**: Resolvido em `backup_padroeira.py` (adição de `conn.rollback()` no context manager `_conexao()`).
+- **Item 4**: Resolvido em `cortex_padroeira_async.py` (captura específica de `ImportError` e log de erro explícito).
+- **Item 5**: Resolvido em `motor_balancete_async.py` (varredura completa da coluna A e `RuntimeError` explícito em vez de offsets `base+2/3/4`).
+- **Item 6**: Resolvido em `cortex_padroeira_async.py` (importação de `DATA_MINIMA_PROCESSAMENTO` do engine, eliminando duplicação).
+- **Item 7**: Resolvido em `calendario_padroeira.py` (cache LRU do cabeçalho do `Movto_cx2.xlsx`).
+- **Item 8**: Resolvido em `motor_balancete_async.py` (remoção de sobrescrita redundante de `SUM` na seção (f)).
+- **Item 9**: Mitigado via `extrator_saurus_sessao.py` reutilizando seletores e funções de `pdv_saurus_extractor.py` (imports explícitos).

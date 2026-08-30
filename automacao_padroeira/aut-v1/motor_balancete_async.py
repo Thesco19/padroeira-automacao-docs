@@ -192,23 +192,29 @@ class MotorBalanceteAsync:
     def _encontrar_linhas_estruturais(self, ws, base: int) -> Dict[str, int]:
         """
         Localiza as linhas de Particip./Projeção/Encargos a partir da âncora.
-        Usa o rótulo da coluna A quando disponível; senão offsets relativos à âncora.
+        CORREÇÃO ITEM 5 (refatorar.md): antes usava offsets relativos (base+2, +3, +4)
+        como fallback silencioso se os rótulos não fossem achados, o que apontava
+        fórmulas para linhas erradas sem aviso. Agora varre TODA a coluna A em busca
+        dos rótulos; se não encontrados, levanta RuntimeError explícito.
         """
         linhas = {}
-        for r in range(base + 1, min(base + 6, ws.max_row + 1)):
+        # Varre toda a planilha procurando os rótulos estruturais
+        for r in range(1, ws.max_row + 1):
             v = ws.cell(row=r, column=1).value
             if isinstance(v, str):
                 t = v.strip()
                 for rotulo in ROTULOS_ESTRUTURAIS:
                     if t.startswith(rotulo[:5]):
                         linhas[rotulo] = r
-        # Fallbacks relativos à âncora (padrão do template: +2 Particip., +3 Projeção, +4 Encargos)
-        if "Particip." not in linhas:
-            linhas["Particip."] = base + 2
-        if "Projeção" not in linhas:
-            linhas["Projeção"] = base + 3
-        if "Encargos" not in linhas:
-            linhas["Encargos"] = base + 4
+        
+        # Validação: se algum rótulo não foi encontrado, falha explicitamente
+        for rotulo in ROTULOS_ESTRUTURAIS:
+            if rotulo not in linhas:
+                raise RuntimeError(
+                    f"[ERRO ESTRUTURAL] Rótulo '{rotulo}' não encontrado no Balancete Pad. "
+                    f"O template da planilha pode ter sido alterado. Corrija o template ou "
+                    f"atualize ROTULOS_ESTRUTURAIS em motor_balancete_async.py."
+                )
         return linhas
 
     def _realinhar_fórmulas_estruturais(self, ws, linha_totais: int, linha_totais_antiga: Optional[int]) -> None:
@@ -405,14 +411,10 @@ class MotorBalanceteAsync:
                 ws_pad[f'Q{linha_destino}'].value = f'=SUM(B{linha_destino}:P{linha_destino})'
                 linhas_modificadas += 1
 
-            # (f) Reconstrói as fórmulas de agregação da linha de totais (D/Q e demais
-            #     colunas B..P) sobre os dias efetivamente gravados, para que
-            #     Particip. (D31=D29/Q29) e Projeção (Q32=Q29/...) apontem para totais
-            #     corretos. Remove a fórmula de subtotal espúria do slot ocioso
-            #     (linha_totais-1) quando não usado.
-            ws_pad[f"D{linha_totais}"] = f"=SUM(D2:D{linha_ultimo_dia})"
-            ws_pad[f"Q{linha_totais}"] = f"=SUM(Q2:Q{linha_ultimo_dia})"
-            ws_pad[f"R{linha_totais}"] = f"=SUM(R2:R{linha_ultimo_dia})"  # Sangria (espelhada do Diário)
+            # (f) Reconstrói as fórmulas de agregação da linha de totais (B..R)
+            #     sobre os dias efetivamente gravados, para que Particip. e Projeção
+            #     apontem para totais corretos. Loop único evita sobrescrita
+            #     redundante (refatorar.md item 8).
             for c in range(2, 19):  # 2..18 (B..R) — inclui a coluna R (Sangria)
                 letra = get_column_letter(c)
                 ws_pad[f"{letra}{linha_totais}"] = f"=SUM({letra}2:{letra}{linha_ultimo_dia})"
