@@ -5,11 +5,11 @@ Córtex Principal - Automação Ecossistema Padroeira (Async Version)
 Orquestrador Central adaptado para Async Reconciliation Architecture V2
 
 Versão reestruturada para extração multi-data:
-  - Para cada data pendente, tenta carregar fechamentos/fechamento_caixa_{AAA_MM_DD}.txt.
+  - Para cada data pendente, carrega fechamentos/fechamento_caixa_{AAA_MM_DD}.txt.
   - Se ausente, invoca o robô Playwright (pdv_saurus_extractor) para resgatar
     o relatório do portal Saurus e salvá-lo no cache local.
-  - Fallback para fechamento_caixa.txt estático quando Playwright não disponível
-    ou sem credenciais no .env.
+  - SEM fallback estático: nunca usa fechamento_caixa.txt de outras datas.
+    A única fonte válida é o arquivo DATADO dentro de ./fechamentos/.
 """
 
 import asyncio
@@ -25,6 +25,8 @@ import logging
 
 from calendario_padroeira import dia_eh_fechado
 from engine_consolidacao_async import DATA_MINIMA_PROCESSAMENTO
+from catalogo_produtos import CatalogoProdutos, ProdutoIdentificado
+from backup_padroeira import salvar_auditoria_calculo
 
 # Configure logging
 logging.basicConfig(
@@ -35,6 +37,18 @@ logger = logging.getLogger("CortexPadroeiraAsync")
 
 # Caminhos dinâmicos relativos ao próprio script (portável, sem hardcode).
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Regex de linha de item na seção PRODUTOS VENDIDOS.
+# Formato real do relatório Saurus:
+#   "   383     REFEICAO A VONTADE                                                                                UN     5,000"
+# Agrupa: (1) código, (2) nome, (3) unidade (KG|UN), (4) quantidade (pt-BR, vírgula decimal).
+_RE_ITEM = re.compile(
+    r"^\s*(\d{1,4})\s{2,}"
+    r"(.+?)\s{2,}"
+    r"(KG|UN)\s+"
+    r"([\d.,]+)\s*$",
+    re.MULTILINE,
+)
 
 # Data mínima de processamento importada do engine para evitar duplicação
 # de constante (refatorar.md item 6). Nada anterior a isso é tocado pelo
@@ -116,23 +130,27 @@ class CortexPadroeiraAsync:
     # ------------------------------------------------------------------
     def extrair_dados_saurus_por_data(self, data_str: str) -> Optional[Dict[str, str]]:
         """
-        Lê o arquivo fechamento_caixa_{data_str}.txt ou, como fallback,
-        o arquivo padrão fechamento_caixa.txt; parseia e retorna o
-        dicionário de totais para aquela data específica.
+        Lê o arquivo fechamento_caixa_{data_str}.txt (ÚNICA fonte válida) e
+        parseia o dicionário de totais para aquela data específica.
+
+        Regra estrita (sem fellback):
+          - Apenas o arquivo dentro de ./fechamentos/ é consumido.
+          - Se `fechamentos/fechamento_caixa_{data_str}.txt` NÃO existir no
+            disco, loga WARNING e retorna None imediatamente — NUNCA usa dados
+            de outras datas (ex.: fechamento_caixa.txt estático) para suprir.
         """
         txt_path = os.path.join(self.pasta_fechamentos, f"fechamento_caixa_{data_str}.txt")
 
-        # Fallback: arquivo padrão (único arquivo estático legado)
-        fallback_path = os.path.join(self.base_dir, "fechamento_caixa.txt")
         if not os.path.exists(txt_path):
-            if os.path.exists(fallback_path):
-                logger.warning(
-                    f"[AVISO] Usando fechamento_caixa.txt padrão para a data {data_str}"
-                )
-                txt_path = fallback_path
-            else:
-                logger.warning(f"Nenhum arquivo de fechamento encontrado para {data_str}")
-                return None
+            logger.warning(
+                f"[SISTEMA] Fechamento real não encontrado para a data {data_str}"
+            )
+            return None
+
+        logger.info(
+            f"[CÓRTEX] Lendo fechamento real: "
+            f"fechamentos/fechamento_caixa_{data_str}.txt"
+        )
 
         try:
             with open(txt_path, "r", encoding="utf-8") as f:
@@ -180,8 +198,8 @@ class CortexPadroeiraAsync:
         # IMPORTANTE: podem existir VARIAS linhas "REFEICAO QUILO KG" / "SOBREMESA QUILO KG"
         # no mesmo fechamento (ex.: almoco + jantar). Por isso usamos findall + soma,
         # e nao re.search (que pegaria so a primeira e subestimaria o peso do dia).
-        def _somar_kg(padrao: str) -> float:
-            vals = re.findall(padrao, conteudo)
+        def _somar_kg(padrao: str, flags: int = 0) -> float:
+            vals = re.findall(padrao, conteudo, flags)
             soma = 0.0
             for v in vals:
                 try:
@@ -190,51 +208,133 @@ class CortexPadroeiraAsync:
                     continue
             return soma
 
-        def _num(padrao: str, flags: int = 0) -> Optional[float]:
-            m = re.search(padrao, conteudo, flags)
-            if not m:
-                return None
-            try:
-                return float(m.group(1).replace(",", "."))
-            except ValueError:
-                return None
-
-        peso_buf = _somar_kg(r"REFEICAO QUILO\s+KG\s+([\d.,]+)")
-        peso_sob = _somar_kg(r"SOBREMESA QUILO\s+KG\s+([\d.,]+)")
+        # Pesos do quilo separados por CÓDIGO: 385/386 (REFEICAO QUILO) e
+        # 425/426 (SOBREMESA QUILO) têm o MESMO nome mas PREÇOS DIFERENTES
+        # (dia de semana vs fim de semana). A regex agora ancora no código
+        # (início de linha) para não somar os dois como um bloco só.
+        peso_buf_c385 = _somar_kg(r"^\s*385\s+REFEICAO QUILO\s+KG\s+([\d.,]+)", re.MULTILINE)
+        peso_buf_c386 = _somar_kg(r"^\s*386\s+REFEICAO QUILO\s+KG\s+([\d.,]+)", re.MULTILINE)
+        peso_sob_c425 = _somar_kg(r"^\s*425\s+SOBREMESA QUILO\s+KG\s+([\d.,]+)", re.MULTILINE)
+        peso_sob_c426 = _somar_kg(r"^\s*426\s+SOBREMESA QUILO\s+KG\s+([\d.,]+)", re.MULTILINE)
+        peso_buf = peso_buf_c385 + peso_buf_c386
+        peso_sob = peso_sob_c425 + peso_sob_c426
+        peso_grill = _somar_kg(r"REFEICAO QUILO GRILL\s+KG\s+([\d.,]+)")
 
         # --- Quantidades unitárias e valores em R$ para o Kg Equivalente ---
-        qtd_av = _num(r"REFEICAO A VONTADE\s+UN\s+([\d.,]+)")
-        qtd_ts = _num(r"REFEICAO TO SAVE\s+UN\s+([\d.,]+)")
-        qtd_cs = _num(r"REFEICAO COM SOBREMESA\s+UN\s+([\d.,]+)")
+        # Contagem pelos CÓDIGOS do relatório Saurus. Variantes do "a vontade":
+        #   - a VONTADE (sem sobremesa): 383 REFEICAO A VONTADE + 130 COMA A VONTADE SABADO
+        #   - a VONTADE com SOBREMESA:   384 REFEICAO COM SOBREMESA + 131 COMA A VONTADE SABADO COM SO
+        # PREÇO POR CÓDIGO: cada código tem o SEU preço fixo (383=63,90, 130=73,90,
+        # 384=73,90, 131=83,90). Somente o DIVISOR (valor_kg_dia) é que respeita o
+        # dia da semana (sábado vs seg-sex).
+        qtd_av_c383 = _somar_kg(r"REFEICAO A VONTADE\s+UN\s+([\d.,]+)")
+        qtd_av_c130 = _somar_kg(r"COMA A VONTADE SABADO\s+UN\s+([\d.,]+)")
+        qtd_cs_c384 = _somar_kg(r"REFEICAO COM SOBREMESA\s+UN\s+([\d.,]+)")
+        qtd_av_c131 = _somar_kg(r"COMA A VONTADE SABADO\s+COM SO\s+UN\s+([\d.,]+)")
+        qtd_ts = _somar_kg(r"REFEICAO TO SAVE\s+UN\s+([\d.,]+)")
         # PRATOS EXECUTIVOS e DOCES: valor em R$ na seção "SUBCATEGORIAS VENDIDAS".
         r_exec = re.search(r"PRATOS EXECUTIVOS\s+[\d.,]+\s+([\d.,]+)", conteudo)
         r_doces = re.search(r"\bDOCES\s+[\d.,]+\s+([\d.,]+)", conteudo)
         val_exec = float(r_exec.group(1).replace(",", ".")) if r_exec else 0.0
         val_doces = float(r_doces.group(1).replace(",", ".")) if r_doces else 0.0
 
-        # Preço do KG do dia (regra de dia da semana / override por data em config_precos).
+        # Preços por CÓDIGO (config_precos). A alíquota de cada código é FIXA:
+        #   - 385 / 425 (dia útil) -> preço de quilo dia útil (tabela da data)
+        #   - 386 / 426 (FDS)      -> preço de quilo FDS       (tabela da data)
+        #   - 383 (a vontade) = 63,90 | 130 = 73,90 | 384 = 73,90 | 131 = 83,90
+        # O DIVISOR (valor_kg_dia) é o preço do quilo do BUFFET no dia: sábado
+        # usa a tabela de FDS, dia útil usa a tabela própria — regra do grupo.
+        dt_dia = None
         try:
-            from config_precos import valor_kg_dia, REFEICAO_COM_SOBREMESA
+            from config_precos import (valor_kg_dia, preco_por_codigo,
+                                       REFEICAO_TO_SAVE)
             dt_dia = datetime.strptime(data_str, "%Y-%m-%d").date()
             vkg = valor_kg_dia(dt_dia)
         except ImportError as e:
             logger.error(f"[AVISO] Falha ao importar config_precos: {e}")
-            vkg = 96.90  # fallback conservador (padrão dias úteis)
-            REFEICAO_COM_SOBREMESA = 73.90
+            vkg = 99.90  # fallback conservador (tabela nova dia útil)
+
+            def preco_por_codigo(codigo: int, _data=None) -> float:
+                return float({
+                    385: 99.90, 386: 108.90,
+                    425: 99.90, 426: 108.90,
+                    130: 73.90, 131: 83.90, 383: 63.90, 384: 73.90, 387: 149.90,
+                }.get(codigo, 96.90))
         except (ValueError, TypeError) as e:
             logger.warning(f"[AVISO] Falha ao obter valor_kg_dia para {data_str}: {e}")
-            vkg = 96.90
-            REFEICAO_COM_SOBREMESA = 73.90
+            vkg = 99.90
+
+            def preco_por_codigo(codigo: int, _data=None) -> float:
+                return float({
+                    385: 99.90, 386: 108.90,
+                    425: 99.90, 426: 108.90,
+                    130: 73.90, 131: 83.90, 383: 63.90, 384: 73.90, 387: 149.90,
+                }.get(codigo, 96.90))
 
         # --- Kg Equivalente: Refeição (linha 3) ---
-        # Inclui REFEIÇÃO COM SOBREMESA (un), que antes era ignorada — valor fixo
-        # unitário desse item soma ao equivalente do dia. (rega: vkrisma 03 e 07/08)
-        fat_ref = (peso_buf * vkg) + (qtd_av or 0.0) * 63.90 + (qtd_ts or 0.0) * 13.90 \
-            + (qtd_cs or 0.0) * float(REFEICAO_COM_SOBREMESA) + val_exec
+        # Faturamento por CÓDIGO: quantidade de cada código multiplicado pela
+        # SUA alíquota (tabela individual). Inclui PRATOS EXECUTIVOS (val_exec).
+        fat_ref = (peso_buf_c385 * preco_por_codigo(385, dt_dia)
+                   + peso_buf_c386 * preco_por_codigo(386, dt_dia)) \
+            + (peso_grill * preco_por_codigo(387, dt_dia)) \
+            + qtd_av_c383 * preco_por_codigo(383, dt_dia) \
+            + qtd_av_c130 * preco_por_codigo(130, dt_dia) \
+            + qtd_cs_c384 * preco_por_codigo(384, dt_dia) \
+            + qtd_av_c131 * preco_por_codigo(131, dt_dia) \
+            + (qtd_ts or 0.0) * REFEICAO_TO_SAVE \
+            + val_exec
         kg_eq_ref = fat_ref / vkg if vkg else 0.0
         # --- Kg Equivalente: Sobremesa / Doces (linha 4) ---
-        fat_sob = (peso_sob * vkg) + val_doces
+        # 425 -> quilo dia útil, 426 -> quilo FDS (mesma regra da refeição).
+        # DOCES (val_doces) permanece 100% ISOLADO da Refeição — vai apenas
+        # para a linha 4 (Sobremesa), nunca para a linha 3.
+        fat_sob = (peso_sob_c425 * preco_por_codigo(425, dt_dia)
+                   + peso_sob_c426 * preco_por_codigo(426, dt_dia)) + val_doces
         kg_eq_sob = fat_sob / vkg if vkg else 0.0
+
+        # --- Extração item-a-item (PRODUTOS VENDIDOS) — camada de rastreabilidade ---
+        # PARALELA às regex agregadoras acima: NÃO altera os cálculos do Kg
+        # Equivalente. Identifica cada linha (código, nome, unidade, quantidade)
+        # na seção PRODUTOS VENDIDOS e resolve o produto canônico via catálogo
+        # por CÓDIGO (nomes são apenas descrições auxiliares). Alimenta o campo
+        # `produtos_detalhe` (auditoria/debug, não injetado na planilha).
+        itens_vendidos: List[ProdutoIdentificado] = []
+        inconsist: List[Dict[str, Any]] = []
+        consolidado: Dict[str, Any] = {}
+        inicio_secao = conteudo.find("PRODUTOS VENDIDOS")
+        fim_secao = conteudo.find("SUBCATEGORIAS VENDIDAS", inicio_secao)
+        if inicio_secao >= 0 and fim_secao > inicio_secao:
+            catalogo_cp = CatalogoProdutos()
+            categoria_atual: Optional[str] = None
+            for linha in conteudo[inicio_secao:fim_secao].splitlines():
+                texto = linha.strip()
+                if not texto:
+                    continue
+                # Linha de cabecalho de categoria (ex.: "BALANÇA", "BEBIDAS", "DOCES")
+                if re.match(r"^[A-ZÁÉÍÓÚÇÃÕÊÀ ]+$", texto) and texto[0].isalpha():
+                    categoria_atual = texto
+                    continue
+                mi = _RE_ITEM.match(linha)
+                if not mi:
+                    continue
+                codigo_item = int(mi.group(1))
+                nome_item = mi.group(2).strip()
+                unidade_item = mi.group(3)
+                quantidade_item = float(mi.group(4).replace(",", "."))
+                item = catalogo_cp.resolver(codigo_item, nome_item, unidade_item, quantidade_item)
+                if not item.categoria and categoria_atual:
+                    item.categoria = categoria_atual
+                itens_vendidos.append(item)
+                if item.desconhecido:
+                    inconsist.append({
+                        "tipo": "CODIGO_DESCONHECIDO",
+                        "codigo": itens_vendidos[-1].codigo,
+                        "nome": itens_vendidos[-1].nome_original,
+                        "unidade": itens_vendidos[-1].unidade,
+                        "quantidade": itens_vendidos[-1].quantidade,
+                    })
+            if itens_vendidos:
+                consolidado = catalogo_cp.consolidar_por_canonico(itens_vendidos)
 
         dados = {
             "data": data_str,
@@ -245,6 +345,7 @@ class CortexPadroeiraAsync:
             "total_bruto": total if total else "0.00",
             "clientes": clientes.group(1) if clientes else "0",
             "peso_buf": f"{peso_buf:.3f}",
+            "peso_grill": f"{peso_grill:.3f}",
             "peso_sob": f"{peso_sob:.3f}",
             # Kg Equivalente (convertido R$ -> kg unificado)
             "kg_eq_ref": f"{kg_eq_ref:.3f}",
@@ -252,25 +353,66 @@ class CortexPadroeiraAsync:
             # Detalhe para auditoria/debug (nao injetado na planilha)
             "_kg_eq_debug": {
                 "vkg": round(vkg, 2),
-                "qtd_av": qtd_av, "qtd_ts": qtd_ts,
+                "preco_quilo_semana": round(preco_por_codigo(385, dt_dia), 2),
+                "preco_quilo_fds": round(preco_por_codigo(386, dt_dia), 2),
+                "preco_c130": preco_por_codigo(130, dt_dia),
+                "preco_c383": preco_por_codigo(383, dt_dia),
+                "preco_c384": preco_por_codigo(384, dt_dia),
+                "preco_c387": preco_por_codigo(387, dt_dia),
+                "preco_c425": preco_por_codigo(425, dt_dia),
+                "preco_c426": preco_por_codigo(426, dt_dia),
+                "peso_buf_c385": round(peso_buf_c385, 3),
+                "peso_buf_c386": round(peso_buf_c386, 3),
+                "peso_sob_c425": round(peso_sob_c425, 3),
+                "peso_sob_c426": round(peso_sob_c426, 3),
+                "peso_grill": round(peso_grill, 3),
+                "qtd_av_c383": qtd_av_c383, "qtd_av_c130": qtd_av_c130,
+                "qtd_cs_c384": qtd_cs_c384, "qtd_av_c131": qtd_av_c131,
+                "qtd_ts": qtd_ts,
                 "val_exec": round(val_exec, 2), "val_doces": round(val_doces, 2),
                 "fat_ref": round(fat_ref, 2), "fat_sob": round(fat_sob, 2),
             },
+            # Detalhe item-a-item por código PDV (rastreabilidade/auditoria,
+            # nao injetado na planilha). Ausente em relatórios sem a seção.
+            "produtos_detalhe": [
+                {
+                    "codigo": it.codigo,
+                    "nome_original": it.nome_original,
+                    "unidade": it.unidade,
+                    "quantidade": it.quantidade,
+                    "produto_canonico": it.produto_canonico,
+                    "categoria": it.categoria,
+                    "desconhecido": it.desconhecido,
+                }
+                for it in itens_vendidos
+            ],
+            "inconsistencias": inconsist,
         }
         self.dados_por_data[data_str] = dados
+
+        # --- Snapshot de auditoria (persistido no SQLite) ---
+        # Fotografia exata do momento do cálculo, para o comando /auditar exibir
+        # a memória de cálculo no padrão BR (DD/MM/AAAA) SEM reprocessar o .txt.
+        # Só é gravado quando o cálculo foi bem-sucedido (dados não-None).
+        self._salvar_snapshot_auditoria(dados, data_str)
         return dados
 
     # ------------------------------------------------------------------
     # Extração legada (arquivo único) — mantida por compatibilidade
     # ------------------------------------------------------------------
     def extrair_dados_saurus(self) -> Optional[Dict[str, str]]:
-        """Lê fechamento_caixa.txt e retorna totais. Usado pelo /fechar (Telegram)."""
+        """Compat/esboço legado.
+
+        O antigo fallback 'fechamento_caixa.txt' (estático, na raiz) foi
+        ELIMINADO: a única fonte válida é fechamentos/fechamento_caixa_{data}.txt.
+        Sem o arquivo datado, retorna None — nunca inventa um fechamento.
+        """
         dados = self.extrair_dados_saurus_por_data("_legado_")
         if dados:
             self.dados = dados
             self.status["data_extraction"] = "success"
             return dados
-        self.status["data_extraction"] = "error: fechamento_caixa.txt não encontrado"
+        self.status["data_extraction"] = "error: fechamento real (datado) não encontrado"
         return None
 
     # ------------------------------------------------------------------
@@ -520,6 +662,87 @@ class CortexPadroeiraAsync:
 
         return resultados
 
+    # ------------------------------------------------------------------
+    # Snapshot de auditoria (persistent to SQLite via backup_padroeira)
+    # ------------------------------------------------------------------
+    def _salvar_snapshot_auditoria(self, dados: Dict[str, Any], data_str: str) -> None:
+        """
+        Estrutura `dados_auditoria` com a fotografia exata do cálculo do Kg
+        Equivalente e persiste via `backup_padroeira.salvar_auditoria_calculo`.
+
+        `detalhamento` carrega, em formato amigável (datas DD/MM/AAAA), os itens
+        dos grupos Refeição (Linha 3) e Sobremesa/Doces (Linha 4): código PDV,
+        nome, quantidade, unidade, preço unitário, faturamento do item e as
+        subcategorias (PRATOS EXECUTIVOS / DOCES). Este é o dado que o /auditar
+        usa para reproduzir a conferência SEM reprocessar o arquivo .txt.
+        """
+        dbg = dados.get("_kg_eq_debug") or {}
+        data_br = self._fmt_data_br(data_str)
+        vkg = dbg.get("vkg", 0.0) or 0.0
+
+        itens_refeicao: List[Dict[str, Any]] = []
+        itens_sobremesa: List[Dict[str, Any]] = []
+
+        def _add(lista, codigo, nome, qtd, un, preco):
+            fat = round((qtd or 0.0) * float(preco or 0.0), 2)
+            lista.append({
+                "codigo": codigo,
+                "nome": nome,
+                "quantidade": qtd or 0.0,
+                "unidade": un or "UN",
+                "preco_unitario": float(preco or 0.0),
+                "faturamento": fat,
+            })
+
+        # Refeição (Linha 3)
+        for cod, nome, qtd, un, chave_peso in (
+            (383, "REFEICAO A VONTADE", dbg.get("qtd_av_c383"), "UN", None),
+            (384, "REFEICAO COM SOBREMESA", dbg.get("qtd_cs_c384"), "UN", None),
+            (385, "REFEICAO QUILO", dbg.get("peso_buf_c385"), "KG", "preco_quilo_semana"),
+            (386, "REFEICAO QUILO", dbg.get("peso_buf_c386"), "KG", "preco_quilo_fds"),
+            (387, "REFEICAO QUILO GRILL", dbg.get("peso_grill"), "KG", "preco_c387"),
+            (130, "COMA A VONTADE SABADO", dbg.get("qtd_av_c130"), "UN", None),
+            (131, "COMA A VONTADE SABADO COM SO", dbg.get("qtd_av_c131"), "UN", None),
+        ):
+            preco = dbg.get(chave_peso) if chave_peso else dbg.get(f"preco_c{cod}")
+            if (qtd or 0.0) > 0:
+                _add(itens_refeicao, cod, nome, qtd, un, preco)
+        # Sobremesa / Doces (Linha 4)
+        for cod, nome, qtd, un, chave_peso in (
+            (425, "SOBREMESA QUILO", dbg.get("peso_sob_c425"), "KG", "preco_c425"),
+            (426, "SOBREMESA QUILO", dbg.get("peso_sob_c426"), "KG", "preco_c426"),
+        ):
+            preco = dbg.get(chave_peso) if chave_peso else dbg.get(f"preco_c{cod}")
+            if (qtd or 0.0) > 0:
+                _add(itens_sobremesa, cod, nome, qtd, un, preco)
+
+        fat_ref = dbg.get("fat_ref", 0.0) or 0.0
+        fat_sob = dbg.get("fat_sob", 0.0) or 0.0
+        kg_eq_ref = float(dados.get("kg_eq_ref") or 0.0)
+        kg_eq_sob = float(dados.get("kg_eq_sob") or 0.0)
+
+        dados_auditoria = {
+            "data_iso": data_str,
+            "data_br": data_br,
+            "faturamento_refeicao": round(fat_ref, 2),
+            "faturamento_sobremesa": round(fat_sob, 2),
+            "preco_kg_divisor": round(vkg, 2),
+            "kg_eq_refeicao": round(kg_eq_ref, 3),
+            "kg_eq_sobremesa": round(kg_eq_sob, 3),
+            "detalhamento": {
+                "data_br": data_br,
+                "vkg": round(vkg, 2),
+                "subcategoria_exec": round(dbg.get("val_exec", 0.0) or 0.0, 2),
+                "subcategoria_doces": round(dbg.get("val_doces", 0.0) or 0.0, 2),
+                "grupo_refeicao": itens_refeicao,
+                "grupo_sobremesa": itens_sobremesa,
+            },
+        }
+        try:
+            salvar_auditoria_calculo(data_str, dados_auditoria)
+        except Exception as e:
+            logger.warning(f"[auditoria] Falha ao persistir snapshot de {data_str}: {e}")
+
     @staticmethod
     def _fmt_data_br(data_iso: str) -> str:
         """Converte '2026-08-04' -> '04/08/2026' para logs amigáveis."""
@@ -563,7 +786,7 @@ def main() -> None:
         dados = cortex_async.extrair_dados_saurus()
 
         if not dados:
-            bot.reply_to(message, "❌ Erro: Arquivo 'fechamento_caixa.txt' não encontrado na pasta do laboratório.")
+            bot.reply_to(message, "❌ Erro: Fechamento real (feito no portal Saurus) não encontrado. Nenhum fallback será usado.")
             return
 
         msg = (

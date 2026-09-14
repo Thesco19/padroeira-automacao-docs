@@ -25,6 +25,7 @@ que já filtra por mês-alvo. Este módulo só cuida de backup e alerta.
 
 import glob
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -88,6 +89,19 @@ def inicializar_db() -> None:
                 categoria TEXT NOT NULL,
                 detalhe TEXT,
                 atualizado_em TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS auditoria_calculos (
+                data_iso TEXT PRIMARY KEY,       -- Ex: '2026-09-04'
+                faturamento_refeicao REAL,
+                faturamento_sobremesa REAL,
+                preco_kg_divisor REAL,
+                kg_eq_refeicao REAL,
+                kg_eq_sobremesa REAL,
+                detalhamento_json TEXT,          -- JSON com itens, códigos, unidades,
+                                                 -- preços unitários e subcategorias
+                calculado_em TEXT NOT NULL
             )
         """)
 
@@ -233,8 +247,9 @@ def limpar_fechamentos_antigos(pasta_fechamentos: str, retencao_dias: int = RETE
     """
     Remove fechamento_caixa_*.txt com mais de `retencao_dias` dias
     (baseado na data no nome do arquivo, não no mtime, pra não depender
-    de quando o arquivo foi baixado). Mantém sempre o legado
-    fechamento_caixa.txt (sem sufixo de data). Retorna quantos foram removidos.
+    de quando o arquivo foi baixado). Só manipula arquivos DATADOS —
+    o legado fechamento_caixa.txt (sem data) não é fonte válida e
+    permanece intocado. Retorna quantos foram removidos.
     """
     padrao = os.path.join(pasta_fechamentos, "fechamento_caixa_*.txt")
     agora = datetime.now().date()
@@ -256,3 +271,84 @@ def limpar_fechamentos_antigos(pasta_fechamentos: str, retencao_dias: int = RETE
                 logger.error(f"[retencao] Falha ao remover {nome}: {e}")
 
     return removidos
+
+
+def salvar_auditoria_calculo(data_iso: str, dados_auditoria: dict) -> None:
+    """
+    Grava (ou atualiza) o snapshot de cálculo do Kg Equivalente para `data_iso`
+    (AAAA-MM-DD) na tabela `auditoria_calculos`. Idempotente por data.
+
+    `dados_auditoria` é a fotografia exata do momento do cálculo (devem conter,
+    no mínimo): faturamento_refeicao, faturamento_sobremesa, preco_kg_divisor,
+    kg_eq_refeicao, kg_eq_sobremesa e detalhamento (dict serializável). O campo
+    `detalhamento_json` guarda a estrutura item-a-item para o /auditar reproduzir
+    a mensagem de conferência sem reprocessar o arquivo de fechamento.
+    """
+    inicializar_db()
+    detalhe = dados_auditoria.get("detalhamento") or {}
+    with _conexao() as conn:
+        conn.execute(
+            """
+            INSERT INTO auditoria_calculos (
+                data_iso, faturamento_refeicao, faturamento_sobremesa,
+                preco_kg_divisor, kg_eq_refeicao, kg_eq_sobremesa,
+                detalhamento_json, calculado_em
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(data_iso) DO UPDATE SET
+                faturamento_refeicao=excluded.faturamento_refeicao,
+                faturamento_sobremesa=excluded.faturamento_sobremesa,
+                preco_kg_divisor=excluded.preco_kg_divisor,
+                kg_eq_refeicao=excluded.kg_eq_refeicao,
+                kg_eq_sobremesa=excluded.kg_eq_sobremesa,
+                detalhamento_json=excluded.detalhamento_json,
+                calculado_em=excluded.calculado_em
+            """,
+            (
+                data_iso,
+                dados_auditoria.get("faturamento_refeicao"),
+                dados_auditoria.get("faturamento_sobremesa"),
+                dados_auditoria.get("preco_kg_divisor"),
+                dados_auditoria.get("kg_eq_refeicao"),
+                dados_auditoria.get("kg_eq_sobremesa"),
+                json.dumps(detalhe, ensure_ascii=False, default=str),
+                datetime.now().isoformat(),
+            ),
+        )
+    logger.info(f"[auditoria] Snapshot de cálculo salvo para {data_iso}")
+
+
+def obter_auditoria_calculo(data_iso: str) -> Optional[dict]:
+    """
+    Busca o snapshot de cálculo de `data_iso` (AAAA-MM-DD) em `auditoria_calculos`.
+    Retorna dict com os campos da tabela (sendo `detalhamento` o JSON já
+    desserializado), ou None se não houver snapshot salvo para a data.
+    """
+    if not os.path.exists(DB_PATH):
+        return None
+    inicializar_db()
+    with _conexao() as conn:
+        linha = conn.execute(
+            "SELECT data_iso, faturamento_refeicao, faturamento_sobremesa, "
+            "preco_kg_divisor, kg_eq_refeicao, kg_eq_sobremesa, "
+            "detalhamento_json, calculado_em "
+            "FROM auditoria_calculos WHERE data_iso = ?",
+            (data_iso,),
+        ).fetchone()
+    if not linha:
+        return None
+    detalhamento = {}
+    if linha[6]:
+        try:
+            detalhamento = json.loads(linha[6])
+        except (ValueError, TypeError):
+            detalhamento = {}
+    return {
+        "data_iso": linha[0],
+        "faturamento_refeicao": linha[1],
+        "faturamento_sobremesa": linha[2],
+        "preco_kg_divisor": linha[3],
+        "kg_eq_refeicao": linha[4],
+        "kg_eq_sobremesa": linha[5],
+        "detalhamento": detalhamento,
+        "calculado_em": linha[7],
+    }

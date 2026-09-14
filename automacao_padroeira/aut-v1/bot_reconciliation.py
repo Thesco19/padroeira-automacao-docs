@@ -16,10 +16,12 @@ Comandos:
                              Se o relatório do dia já estiver em cache, reaproveita sem
                              reentrar no portal.
     /finalizar [MMAA]    -> CONCLUI o preenchimento e o transporte de dados
-                             (Cortex -> Engine -> Balancete Pad). Sem MMAA, assume o dia
+                             (Cortex -> Engine -> Balancete). Sem MMAA, assume o dia
                              de hoje (AAMM corrente). Se MMAA informado, faz a varredura
                              completa do período. /reconciliar é mantido como alias.
     /amostra [N] [MMAA]  -> roda apenas N datas pendentes (default 3) — útil p/ teste e2e.
+    /tabela              -> exibe a tabela de preços vigente (valores do Kg Equivalente).
+    /doctor              -> diagnóstico de saúde via IA dos logs recentes.
 
 Logs em tempo real: reconciliation.log é zerado a cada start (mode "w") e
 espelhado no stdout. Marcadores exatos exigidos pelo teste de produção:
@@ -36,6 +38,7 @@ import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime
 
 # ----------------------------------------------------------------------
@@ -69,6 +72,21 @@ _sh.setFormatter(_fmt)
 logger.addHandler(_fh)
 logger.addHandler(_sh)
 
+# Captura os loggers internos do telebot (polling/409/network) e do urllib3
+# para o MESMO arquivo/handler, dando visibilidade a falhas silenciosas de
+# getUpdates que o processamento dos comandos não veria.
+for _nome_extra in ("telebot", "TeleBot"):
+    _lg_extra = logging.getLogger(_nome_extra)
+    _lg_extra.setLevel(logging.INFO)
+    _lg_extra.handlers = []
+    _lg_extra.addHandler(_fh)
+    _lg_extra.addHandler(_sh)
+_lg_urllib3 = logging.getLogger("urllib3")
+_lg_urllib3.setLevel(logging.WARNING)
+_lg_urllib3.handlers = []
+_lg_urllib3.addHandler(_fh)
+_lg_urllib3.addHandler(_sh)
+
 
 # ----------------------------------------------------------------------
 # Carga de módulos via importlib (mesmo padrão de pre_producao_2608.py).
@@ -87,6 +105,7 @@ cortex_mod = _carregar("cortex_padroeira_async", os.path.join(WORK, "cortex_padr
 engine_mod = _carregar("engine_consolidacao_async", os.path.join(WORK, "engine_consolidacao_async.py"))
 bal_mod = _carregar("motor_balancete_async", os.path.join(WORK, "motor_balancete_async.py"))
 async_recon_mod = _carregar("async_reconciliation_v2", os.path.join(WORK, "async_reconciliation_v2.py"))
+backup_mod = _carregar("backup_padroeira", os.path.join(WORK, "backup_padroeira.py"))
 
 # Força o BASE_DIR do engine para a pasta de trabalho (onde estão os xlsx de teste).
 engine_mod.BASE_DIR = WORK
@@ -105,6 +124,23 @@ if not TOKEN_TELEGRAM:
 import telebot
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM)
+
+# --- Auto-healing: webhook órfão bloqueia polling ---
+# Se um serviço antigo registrou um webhook neste token e foi desligado, o
+# Telegram responde 409 Conflict e o bot não recebe NENHUM comando via
+# getUpdates. Ao iniciar, removemos qualquer webhook ativo que não seja
+# o nosso (reset seguro: nenhuma instância deste bot registra webhook).
+try:
+    wh = bot.get_webhook_info()
+    wh_url = getattr(wh, "url", "") or ""
+    if wh_url:
+        logger.warning("Webhook órfão detectado no token (%s) — removendo...", wh_url)
+        bot.remove_webhook()
+        logger.info("Webhook removido com sucesso. Polling pode prosseguir.")
+    else:
+        logger.info("Nenhum webhook ativo no token (ok).")
+except Exception as e:
+    logger.warning("Auto-healing webhook: não foi possível checar/remover: %s", e)
 
 
 # ----------------------------------------------------------------------
@@ -350,28 +386,61 @@ def _fmt_num(s: str) -> float:
         return 0.0
 
 
-async def _fechar_dia() -> dict:
+def _parse_data_br(texto: str):
+    """
+    Tenta extrair uma data no formato DD/MM/AAAA (ou DD/MM/AA) de uma string.
+
+    Ano com 2 dígitos é interpretado como 20XX (ex: 26 -> 2026).
+    Retorna (data_iso, data_br, aamm) ou (None, None, None) se não encontrar.
+    """
+    m = re.search(r"\b(\d{2})/(\d{2})/(\d{4})\b|\b(\d{2})/(\d{2})/(\d{2})\b", texto or "")
+    if not m:
+        return None, None, None
+    dia = m.group(1) or m.group(4)
+    mes = m.group(2) or m.group(5)
+    ano = m.group(3) or m.group(6)
+    ano = "20" + ano if len(ano) == 2 else ano
+    try:
+        dt = datetime(int(ano), int(mes), int(dia))
+    except ValueError:
+        return None, None, None
+    return dt.strftime("%Y-%m-%d"), dt.strftime("%d/%m/%Y"), dt.strftime("%y%m")
+
+
+async def _fechar_dia(data_iso: str = None) -> dict:
     """
     PRIMEIRO comando do operador (/fechar):
-      1. ENTRA no Saurus (Playwright) e puxa o relatório de fechamento do DIA DE HOJE
-         em TEMPO REAL. Se o relatório do dia já estiver em cache
-         (fechamento_caixa_{data}.txt), ele é APAGADO antes da extração, para que o
-         Playwright sempre entre no portal e baixe a foto ATUALIZADA do faturamento
-         parcial (e não reaproveite uma foto velha do mesmo dia). Se o Playwright
-         estiver indisponível, o cache é mantido como fallback.
+      1. ENTRA no Saurus (Playwright) e puxa o relatório de fechamento do dia
+         informado (ou de HOJE se data_iso for None) em TEMPO REAL. Se o
+         relatório do dia já estiver em cache (fechamento_caixa_{data}.txt),
+         ele é APAGADO antes da extração, para que o Playwright sempre entre
+         no portal e baixe a foto ATUALIZADA do faturamento parcial (e não
+         reaproveite uma foto velha do mesmo dia). Se o Playwright estiver
+         indisponível, o cache é mantido como fallback.
       2. LÊ o FATURAMENTO (total do fechamento) para a CONFERÊNCIA DE CAIXA.
       3. ENVIA a mensagem de conferência para o Telegram.
       4. SALVA o relatório (cache em ./fechamentos/ e histórico JSON) para ser
          usado pelo comando seguinte (/finalizar), que o transporta para o Diário/PAD.
 
+    Args:
+        data_iso: data no formato 'AAAA-MM-DD'. Se None, usa a data de hoje.
+
     Retorna dict com 'erro' (mensagem) em falha, ou:
         {'erro': None, 'data': 'DD/MM/AAAA', 'aamm': 'AAMM',
          'entrou_saurus': bool, 'do_cache': bool, 'dados': {...}, 'msg': str}
     """
-    hoje = datetime.now()
-    hoje_iso = hoje.strftime("%Y-%m-%d")
-    hoje_br = hoje.strftime("%d/%m/%Y")
-    aamm = hoje.strftime("%y%m")
+    if data_iso:
+        try:
+            dt = datetime.strptime(data_iso, "%Y-%m-%d")
+        except ValueError:
+            return {"erro": f"Data inválida: {data_iso}", "data": data_iso,
+                    "aamm": None, "entrou_saurus": False, "do_cache": False,
+                    "dados": None, "msg": f"⚠️ Data inválida: {data_iso}"}
+    else:
+        dt = datetime.now()
+    hoje_iso = dt.strftime("%Y-%m-%d")
+    hoje_br = dt.strftime("%d/%m/%Y")
+    aamm = dt.strftime("%y%m")
 
     cortex = cortex_mod.CortexPadroeiraAsync(base_dir=WORK)
     pasta = cortex.pasta_fechamentos
@@ -381,24 +450,28 @@ async def _fechar_dia() -> dict:
     tinha_cache = os.path.exists(cache)
     do_cache = tinha_cache
 
-    # 1) ESTRATÉGIA "PARCIAL DO DIA": o /fechar consulta o movimento em tempo
-    #    real. Por isso, quando o Playwright está DISPONÍVEL, APAGAMOS o cache do
-    #    dia corrente (se existir) ANTES de disparar a extração, para garantir que
-    #    o robô ENTRE no portal e baixe a foto ATUALIZADA do faturamento parcial —
-    #    e não reaproveite uma foto velha de uma consulta anterior no mesmo dia.
-    #    Se o Playwright NÃO estiver disponível, mantemos o cache existente como
-    #    fallback (não há como obter foto nova sem o portal).
-    if cortex._playwright_disponivel():
-        if tinha_cache:
-            try:
-                os.remove(cache)
-                do_cache = False
-                logger.info(f"[SAURUS] Cache do dia {hoje_br} removido antes da extração: {cache}")
-            except OSError as e:
-                logger.warning(f"[SAURUS] Não foi possível remover o cache do dia {hoje_br}: {e}")
+    # 1) ESTRATÉGIA DE EXTRAÇÃO:
+    #    - DIA CORRENTE (hoje): o /fechar consulta o movimento PARCIAL em tempo
+    #      real. Quando o Playwright está disponível, APAGAMOS o cache do dia (se
+    #      existir) e baixamos a foto ATUALIZADA — nunca reaproveitar uma foto
+    #      velha de consulta anterior no mesmo dia.
+    #    - DIAS PASSADOS: o arquivo em cache é o fechamento DEFINITIVO (relatório
+    #      completo do Saurus). Reentrar no portal é desnecessário (latência e
+    #      risco de apagar um cache bom) — usamos o cache direto. Só entramos no
+    #      portal quando NÃO há cache local.
+    hoje_real = datetime.now().date()
+    eh_hoje = dt.date() == hoje_real
+    playwright_ok = cortex._playwright_disponivel()
+
+    if playwright_ok:
+        # SEMPRE tentamos reextrair do portal quando o Playwright está disponível
+        # (hoje: foto em tempo real; datas antigas: relatório definitivo atualizado,
+        # reparseado com as regras vigentes de preço/kg). O cache local existe APENAS
+        # como fallback: se a renovação falhar, o relatório antigo continua no lugar.
         try:
             from extrator_saurus_sessao import extrair_lote_saurus
-            logger.info(f"[SAURUS] Entrando no portal para puxar fechamento de {hoje_br}...")
+            motivo = "puxar fechamento" if eh_hoje else "atualizar/recalcular"
+            logger.info(f"[SAURUS] {motivo} de {hoje_br} no portal...")
             ok, falhas = await extrair_lote_saurus(
                 [hoje_iso], pasta, headless=cortex._headless_config(),
                 on_progress=lambda i, tot, d, okp: logger.info(
@@ -408,7 +481,12 @@ async def _fechar_dia() -> dict:
             )
             entrou_saurus = ok > 0
             if entrou_saurus:
+                do_cache = False
                 logger.info(f"[SAURUS] Relatório de {hoje_br} baixado e salvo em {cache}")
+            elif not tinha_cache:
+                logger.warning(f"[SAURUS] Sem cache de {hoje_br} e sem renovação via portal.")
+            else:
+                logger.warning(f"[SAURUS] Renovação via portal falhou p/ {hoje_br}; usando cache como fallback.")
         except Exception as e:
             logger.exception(f"[SAURUS] Falha ao entrar no portal Saurus para {hoje_br}")
     else:
@@ -425,6 +503,29 @@ async def _fechar_dia() -> dict:
         return {"erro": msg, "data": hoje_br, "aamm": aamm,
                 "entrou_saurus": entrou_saurus, "do_cache": do_cache, "dados": None, "msg": msg}
 
+    # Memória de cálculo do Kg Equivalente (auditoria em logs): grava o passo-a-
+    # passo usado por _parsear_fechamento (preços por código, pesos/quantidades,
+    # valores de executivos/doces e o divisor do dia) para conferência posterior.
+    dbg = dados.get("_kg_eq_debug") or {}
+    if dbg:
+        logger.info(
+            f"[KG_EQ] Memória de cálculo {hoje_br}: "
+            f"vkg={dbg.get('vkg')} | "
+            f"quilo 385={dbg.get('peso_buf_c385')}kg x R${dbg.get('preco_quilo_semana')} | "
+            f"386={dbg.get('peso_buf_c386')}kg x R${dbg.get('preco_quilo_fds')} | "
+            f"grill 387={dbg.get('peso_grill')}kg | "
+            f"a_vontade 383 x {dbg.get('qtd_av_c383')}un | "
+            f"c130 x {dbg.get('qtd_av_c130')}un | "
+            f"c384 x {dbg.get('qtd_cs_c384')}un | "
+            f"c131 x {dbg.get('qtd_av_c131')}un | "
+            f"executivos=R${dbg.get('val_exec')} | "
+            f"sobremesa 425={dbg.get('peso_sob_c425')}kg x R${dbg.get('preco_c425')} | "
+            f"426={dbg.get('peso_sob_c426')}kg x R${dbg.get('preco_c426')} | "
+            f"doces=R${dbg.get('val_doces')} | "
+            f"fat_ref=R${dbg.get('fat_ref')} -> kg_eq_ref={dados.get('kg_eq_ref')} | "
+            f"fat_sob=R${dbg.get('fat_sob')} -> kg_eq_sob={dados.get('kg_eq_sob')}"
+        )
+
     # 3) Monta a mensagem de conferência de caixa (do relatório do Saurus).
     total = _fmt_num(dados.get("total"))
     dinheiro = _fmt_num(dados.get("dinheiro"))
@@ -437,7 +538,12 @@ async def _fechar_dia() -> dict:
     if entrou_saurus:
         origem = "portal Saurus (foto em tempo real)"
     elif do_cache:
-        origem = "cache local (Playwright indisponível)"
+        if not playwright_ok:
+            origem = "cache local (Playwright indisponível)"
+        elif eh_hoje:
+            origem = "cache local (renovação via portal falhou)"
+        else:
+            origem = "cache local (fechamento definitivo do dia)"
     else:
         origem = "relatório"
     msg = (
@@ -445,7 +551,7 @@ async def _fechar_dia() -> dict:
         f"💰 Faturamento (Total): {_fmt_brl(total)}\n"
         f"💵 Dinheiro: {_fmt_brl(dinheiro)}  |  💳 Crédito: {_fmt_brl(credito)}  |  🏧 Débito: {_fmt_brl(debito)}\n"
         f"🧾 Clientes (Qtd. vendas): {clientes}\n"
-        f"📦 Kg Equiv. Refeição: {kg_ref or '—'}  |  Sobremesa: {kg_sob or '—'}\n"
+        f"📦 Kg Equiv. Refeição: {(kg_ref or '—').replace('.', ',')}  |  Sobremesa: {(kg_sob or '—').replace('.', ',')}\n"
         f"🔎 Fonte: {origem}"
     )
     return {"erro": None, "data": hoje_br, "aamm": aamm,
@@ -496,9 +602,9 @@ def cmd_finalizar(message):
     """
     Handler único dos comandos de operação.
 
-    /fechar            -> PRIMEIRO comando do operador. Puxa o faturamento do dia,
-                          lê para a CONFERÊNCIA DE CAIXA e SALVA NO HISTÓRICO.
-                          Apenas leitura + gravação de histórico (não roda pipeline).
+    /fechar [DD/MM/AAAA] -> PRIMEIRO comando do operador. Puxa o faturamento do
+                          dia informado (ou hoje se sem data), lê para a CONFERÊNCIA
+                          DE CAIXA e SALVA NO HISTÓRICO. Aceita data BR como opcional.
     /finalizar [MMAA]  -> CONCLUI o preenchimento e o transporte de dados
                           (Cortex -> Engine -> Balancete Pad). Sem MMAA, assume o
                           dia de hoje; com MMAA, varredura completa do período.
@@ -510,17 +616,15 @@ def cmd_finalizar(message):
 
     logger.info("[TELEGRAM] Comando recebido do usuário.")
 
-    # /fechar -> entra no Saurus, puxa relatório do dia, lê p/ conferência de
-    # caixa, envia e salva no histórico (para o /finalizar transportar depois).
-    # CORREÇÃO P3 (refatorar.md 4a): /fechar é exclusivo do dia corrente e NÃO
-    # aceita argumentos. Antes, a condição `and not re.search(r"\b\d{4}\b", texto)`
-    # fazia "/fechar 2608" DESVIAR para a reconciliação (pois o regex encontrava
-    # dígitos e a cláusula falhava). Agora /fechar dispara o fluxo de fechamento
-    # sempre, independentemente de texto residual; a varredura por período fica
-    # restrita a /finalizar e /reconciliar.
+    # /fechar [DD/MM/AAAA] -> entra no Saurus, puxa relatório do dia informado
+    # (ou hoje se sem data), lê p/ conferência de caixa, envia e salva no
+    # histórico (para o /finalizar transportar depois).
+    # Aceita data BR (DD/MM/AAAA) como argumento opcional.
     if comando == "fechar":
+        data_iso, data_br, _aamm_fechar = _parse_data_br(texto)
+        label_data = data_br if data_br else "hoje"
         try:
-            reg = _run_async(_fechar_dia())
+            reg = _run_async(_fechar_dia(data_iso=data_iso))
             bot.send_message(chat_id, reg["msg"])
             if reg.get("erro"):
                 logger.info("[TELEGRAM] Faturamento do dia enviado ao usuário (com aviso).")
@@ -744,20 +848,302 @@ def _chamar_openai(api_key: str, system: str, user: str) -> str:
     return resp.json()["choices"][0]["message"]["content"]
 
 
+# ----------------------------------------------------------------------
+# Auditoria de cálculo (/auditar) — snapshot SQLite com datas DD/MM/AAAA
+# ----------------------------------------------------------------------
+def _fmt_num_br(v: float, dec: int = 2) -> str:
+    """Formata número com separador pt-BR (vírgula decimal e ponto de milhar)."""
+    return f"{v:,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _parse_data_auditoria(texto: str):
+    """
+    Converte a entrada de data do /auditar para (data_iso, data_br):
+      - vazio            -> (None, None)  [caller usa hoje ou último fechamento]
+      - 0409 / 04/09     -> 2026-09-04 / 04/09/2026 (mês direto, ano corrente)
+      - 04/09/2026       -> 2026-09-04 / 04/09/2026
+      - 04/09/26         -> 2026-09-04 / 04/09/2026
+    Retorna (None, None) se não reconhecer um formato válido.
+    """
+    t = (texto or "").strip()
+    if not t:
+        return None, None
+
+    m = re.fullmatch(r"(\d{2})/?(\d{2})(?:/(\d{4}))?(?:/(\d{2}))?", t)
+    if m:
+        dia = int(m.group(1))
+        mes = int(m.group(2))
+        if m.group(3):
+            ano = int(m.group(3))
+        elif m.group(4):
+            ano = 2000 + int(m.group(4))
+        else:
+            ano = datetime.now().year
+        try:
+            dt = datetime(ano, mes, dia)
+        except ValueError:
+            return None, None
+        return dt.strftime("%Y-%m-%d"), dt.strftime("%d/%m/%Y")
+
+    # Fallback: procura DD/MM/AAAA na string (ex.: '/auditar 04/09/2026')
+    data_iso, data_br, _aamm = _parse_data_br(texto)
+    return data_iso, data_br
+
+
+def _entrada_display_def(snapshot: dict) -> str:
+    """Sempre exibe a data no padrão BR DD/MM/AAAA (nunca ISO)."""
+    br = (snapshot.get("detalhamento") or {}).get("data_br") or snapshot.get("data_br")
+    if br:
+        return br
+    try:
+        return datetime.strptime(snapshot["data_iso"], "%Y-%m-%d").strftime("%d/%m/%Y")
+    except Exception:
+        return snapshot.get("data_iso", "")
+
+
+def _formatar_linha_item(item: dict) -> str:
+    """Monta uma linha de item de auditoria: Cód X (NOME): QTD UN x R$ P = R$ F."""
+    fat = item.get("faturamento")
+    preco = item.get("preco_unitario") or 0.0
+    qtd = item.get("quantidade") or 0.0
+    un = item.get("unidade") or "UN"
+    # Quantidade formatada em pt-BR (virgula) — KG com 3 casas, UN inteiro.
+    if un.upper() == "KG":
+        qtd_s = _fmt_num_br(qtd, 3)
+    else:
+        qtd_s = str(int(qtd)) if qtd == int(qtd) else _fmt_num_br(qtd, 3)
+    if fat is not None:
+        return (f"• Cód {item['codigo']} ({item['nome']}): {qtd_s} {un} "
+                f"x {_fmt_brl(preco)} = {_fmt_brl(fat)}")
+    return (f"• Cód {item['codigo']} ({item['nome']}): {qtd_s} {un} x {_fmt_brl(preco)}")
+
+
+def _montar_mensagem_auditoria(snapshot: dict, origem: str) -> str:
+    """Monta a mensagem do /auditar no padrão amigável, com datas DD/MM/AAAA."""
+    det = snapshot.get("detalhamento") or {}
+    data_br = _entrada_display_def(snapshot)
+
+    linhas = [f"🔍 AUDITORIA DE CÁLCULO — {data_br}", ""]
+
+    vkg = snapshot.get("preco_kg_divisor")
+    fat_ref = snapshot.get("faturamento_refeicao")
+    fat_sob = snapshot.get("faturamento_sobremesa")
+    kg_ref = snapshot.get("kg_eq_refeicao")
+    kg_sob = snapshot.get("kg_eq_sobremesa")
+    sub_exec = det.get("subcategoria_exec") or 0.0
+    sub_doces = det.get("subcategoria_doces") or 0.0
+
+    # Grupo Refeição (Linha 3)
+    linhas.append("📊 GRUPO REFEIÇÃO (Linha 3):")
+    itens_ref = det.get("grupo_refeicao") or []
+    for item in itens_ref:
+        linhas.append(_formatar_linha_item(item))
+    if sub_exec:
+        linhas.append(f"• Subcategoria PRATOS EXECUTIVOS: {_fmt_brl(sub_exec)}")
+    linhas.append("───────────────")
+    linhas.append(f"Faturamento Refeição: {_fmt_brl(fat_ref)}")
+    linhas.append(f"Divisor do Dia (R$/kg): {_fmt_brl(vkg)}/kg")
+    linhas.append(f"➜ Kg Eq Refeição = {_fmt_brl(fat_ref)} / {_fmt_brl(vkg)} = {_fmt_num_br(kg_ref, 3)} KG")
+    linhas.append("")
+
+    # Grupo Sobremesa / Doces (Linha 4)
+    linhas.append("🍰 GRUPO SOBREMESA / DOCES (Linha 4):")
+    itens_sob = det.get("grupo_sobremesa") or []
+    for item in itens_sob:
+        linhas.append(_formatar_linha_item(item))
+    if sub_doces:
+        linhas.append(f"• Subcategoria DOCES: {_fmt_brl(sub_doces)}")
+    linhas.append("───────────────")
+    linhas.append(f"Faturamento Sobremesa: {_fmt_brl(fat_sob)}")
+    linhas.append(f"Divisor do Dia (R$/kg): {_fmt_brl(vkg)}/kg")
+    linhas.append(f"➜ Kg Eq Sobremesa = {_fmt_brl(fat_sob)} / {_fmt_brl(vkg)} = {_fmt_num_br(kg_sob, 3)} KG")
+    linhas.append("")
+
+    linhas.append(f"💾 Origem: {origem}.")
+    return "\n".join(linhas)
+
+
+def _auditar_dia_completo(data_iso: str, data_br: str) -> str:
+    """
+    Lógica do /auditar para uma data:
+
+      1. Busca snapshot no SQLite via `backup_mod.obter_auditoria_calculo`.
+      2. Se não existir no banco, calcula a partir de
+         fechamentos/fechamento_caixa_{data_iso}.txt (se existir), salva no
+         SQLite e exibe.
+      3. Se não houver .txt de fechamento, retorna mensagem de ausência.
+
+    Retorna a mensagem pronta para o Telegram (datas em DD/MM/AAAA).
+    """
+    snapshot = backup_mod.obter_auditoria_calculo(data_iso)
+    if snapshot:
+        return _montar_mensagem_auditoria(snapshot, "Snapshot de auditoria do banco SQLite")
+
+    # Sem snapshot: tenta calcular à partir do fechamento real (sem fallback).
+    cortex = cortex_mod.CortexPadroeiraAsync(base_dir=WORK)
+    dados = cortex.extrair_dados_saurus_por_data(data_iso)
+    if not dados:
+        caminho = os.path.join(cortex.pasta_fechamentos, f"fechamento_caixa_{data_iso}.txt")
+        if not os.path.exists(caminho):
+            return (f"⚠️ Não há fechamento salvo para {data_br} e nenhum snapshot no "
+                    f"banco. Execute /fechar {data_br} para gerar o relatório do dia.")
+        return f"⚠️ Não foi possível calcular a auditoria para {data_br}."
+
+    # Acabou de calcular via _parsear_fechamento -> snapshot foi salvo. Reconsulta.
+    snapshot = backup_mod.obter_auditoria_calculo(data_iso)
+    if snapshot:
+        return _montar_mensagem_auditoria(snapshot, "Fechamento real (./fechamentos) processado agora")
+    return f"⚠️ Não foi possível gerar a auditoria para {data_br}."
+
+
+@bot.message_handler(commands=['auditar'])
+def cmd_auditar(message):
+    """
+    /auditar [data] — exibe a memória de cálculo do Kg Equivalente de um dia.
+
+    A data pode ser omitida (usa hoje ou o último fechamento processado),
+    ou informada em formato BR:
+      /auditar 0409 | /auditar 04/09 | /auditar 04/09/2026 | /auditar 04/09/26
+
+    Sempre responde com a data no padrão DD/MM/AAAA. Prefere o snapshot no
+    SQLite; se ausente, calcula a partir do fechamento real e salva.
+    """
+    chat_id = message.chat.id
+    logger.info("[TELEGRAM] Comando recebido do usuário (/auditar).")
+
+    texto = message.text or ""
+    data_iso, data_br = _parse_data_auditoria(texto[texto.find(" ") + 1:] if " " in texto else "")
+
+    # Sem data explícita -> tenta hoje, depois o último fechamento disponível.
+    if data_iso is None:
+        hoje_iso = datetime.now().strftime("%Y-%m-%d")
+        hoje_br = datetime.now().strftime("%d/%m/%Y")
+        # 1) snapshot/hoje
+        if backup_mod.obter_auditoria_calculo(hoje_iso):
+            return bot.send_message(chat_id, _montar_mensagem_auditoria(
+                backup_mod.obter_auditoria_calculo(hoje_iso),
+                "Snapshot de auditoria do banco SQLite",
+            ))
+        # 2) fechamento de hoje existe?
+        cortex = cortex_mod.CortexPadroeiraAsync(base_dir=WORK)
+        caminho_hoje = os.path.join(cortex.pasta_fechamentos, f"fechamento_caixa_{hoje_iso}.txt")
+        if os.path.exists(caminho_hoje):
+            return bot.send_message(chat_id, _auditar_dia_completo(hoje_iso, hoje_br))
+        # 3) último fechamento datado disponível
+        import glob as _glob
+        arquivos = sorted(_glob.glob(os.path.join(cortex.pasta_fechamentos, "fechamento_caixa_*.txt")))
+        if arquivos:
+            ultimo = os.path.basename(arquivos[-1]).replace("fechamento_caixa_", "").replace(".txt", "")
+            ultimo_br = datetime.strptime(ultimo, "%Y-%m-%d").strftime("%d/%m/%Y")
+            return bot.send_message(chat_id, _auditar_dia_completo(ultimo, ultimo_br))
+        return bot.send_message(
+            chat_id,
+            "⚠️ Nenhum fechamento encontrado. Execute /fechar para gerar o relatório do dia.",
+        )
+
+    msg = _auditar_dia_completo(data_iso, data_br)
+    bot.send_message(chat_id, msg)
+
+
+@bot.message_handler(commands=['tabela'])
+def cmd_tabela(message):
+    """Exibe a tabela de preços vigente (valores usados pelo sistema de Kg Equivalente)."""
+    from datetime import date as _date
+    try:
+        import config_precos as cp
+    except ImportError:
+        bot.reply_to(message, "⚠️ Não foi possível carregar config_precos.py")
+        return
+
+    hoje = _date.today()
+    eh_sabado = hoje.weekday() == 5
+    posicao = "NOVA" if hoje >= cp.DATA_REAJUSTE else "ANTIGA"
+
+    if eh_sabado:
+        valor_kg_hoje = cp.valor_kg_dia(hoje)
+        label_kg = f"Sábado"
+    else:
+        valor_kg_hoje = cp.valor_kg_dia(hoje)
+        label_kg = f"Dia útil"
+
+    linhas = [
+        "📋 *Tabela de Preços — Padroeira*",
+        f"📅 Data de hoje: {hoje.strftime('%d/%m/%Y')} ({label_kg})",
+        f"📌 Tabela vigente: *{posicao}* (desde {cp.DATA_REAJUSTE.strftime('%d/%m/%Y')})",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━━━",
+        "🍽️ *Refeição à Quilo (Buffet)*",
+        f"  • Seg-Sex (tabela antiga): R$ {cp.REFEICAO_KG_PADRAO_ANTIGO:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        f"  • Sábado  (tabela antiga): R$ {cp.REFEICAO_KG_SABADOS_ANTIGO:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        f"  • Seg-Sex (tabela nova):   R$ {cp.REFEICAO_KG_PADRAO_NOVO:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        f"  • Sábado  (tabela nova):   R$ {cp.REFEICAO_KG_SABADOS_NOVO:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        "",
+        "🔥 *Grill*",
+        f"  • Preço fixo: R$ {cp.REFEICAO_KG_GRILL:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        "",
+        "🍽️ *Coma a Vontade*",
+        f"  • Seg-Sex:         R$ {cp.REFEICAO_A_VONTADE:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        f"  • Seg-Sex c/ Doce: R$ {cp.REFEICAO_COM_SOBREMESA:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        f"  • Fim de semana:         R$ {cp.COMA_A_VONTADE_FDS:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        f"  • Fim de semana c/ Doce: R$ {cp.COMA_A_VONTADE_FDS_DOCE:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        "",
+        "📦 *Outros*",
+        f"  • To Save: R$ {cp.REFEICAO_TO_SAVE:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        f"  • Pavê Pote (seg):    R$ {cp.PAVE_POTE_SEMANA:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        f"  • Pavê Pote (sáb):    R$ {cp.PAVE_POTE_SABADO:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        f"  • Gelatina Colorida:  R$ {cp.GELATINA_COLORIDA:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"⚡ *KG do dia (hoje):* R$ {valor_kg_hoje:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        f"🔧 *Reajuste automático em:* {cp.DATA_REAJUSTE.strftime('%d/%m/%Y')}",
+    ]
+
+    if cp.OVERRIDE_KG_POR_DATA:
+        linhas.append("")
+        linhas.append("🔒 *Overrides por data:*")
+        for dt, preco in sorted(cp.OVERRIDE_KG_POR_DATA.items()):
+            linhas.append(f"  • {dt}: R$ {preco:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    bot.send_message(message.chat.id, "\n".join(linhas), parse_mode="Markdown")
+
+
 @bot.message_handler(commands=['start', 'help'])
 def cmd_help(message):
     bot.reply_to(
         message,
         "Comandos disponíveis:\n"
-        "/fechar — consulta o FATURAMENTO PARCIAL DO DIA em tempo real: APAGA o cache do dia e ENTRA no Saurus para baixar a foto atualizada, lê para a conferência de caixa, envia e SALVA o relatório. Use este PRIMEIRO.\n"
+        "/fechar [DD/MM/AAAA] — consulta o FATURAMENTO do dia em tempo real. "
+        "Sem data, usa hoje. Com data BR (ex: /fechar 05/09/2026 ou /fechar 05/09/26), "
+        "puxa essa data. "
+        "APAGA o cache do dia e ENTRA no Saurus para baixar a foto atualizada, "
+        "lê para a conferência de caixa, envia e SALVA o relatório.\n"
         "/finalizar [MMAA] — CONCLUI o preenchimento e o transporte de dados "
         "(Cortex -> Engine -> Balancete) usando os relatórios baixados e, ao final, "
         "LIMPA os processos Playwright/Chromium órfãos. Sem data, processa o DIA DE HOJE.\n"
         "/reconciliar [AAMM] — alias de /finalizar.\n"
         "/amostra [N] [AAMM] — roda N datas pendentes (teste e2e), com cleanup de órfãos ao final.\n"
+        "/tabela — exibe a tabela de preços vigente (valores usados pelo sistema de Kg Equivalente).\n"
+        "/auditar [data] — exibe a memória de cálculo do Kg Equivalente (US/REFEIÇÃO/SOBREMESA). "
+        "Data opcional em BR (0409, 04/09, 04/09/2026). Usa snapshot no SQLite ou o fechamento real.\n"
         "/doctor — lê os logs recentes; se houver erro, consulta a IA (Gemini/OpenAI) e "
         "retorna diagnóstico + prompt de ajuste. Configure GEMINI_API_KEY ou OPENAI_API_KEY no .env.\n"
 
+    )
+
+
+# ----------------------------------------------------------------------
+# Catch-all: registra QUALQUER update que chegue e não case com handlers
+# acima. Registrado por último para só disparar quando nada mais casar.
+# Diagnóstico: se esta linha imprimir, o update chegou ao processo; se nem
+# esta nem um handler específico imprimir, o polling não está entregando.
+# ----------------------------------------------------------------------
+@bot.message_handler(func=lambda m: True)
+def _catch_all_messages(message):
+    logger.info(
+        "[TELEGRAM] (catch-all) update recebido: text=%r from=%s chat=%s",
+        getattr(message, "text", None),
+        getattr(getattr(message, "from_user", None), "username", None),
+        getattr(getattr(message, "chat", None), "id", None),
     )
 
 
@@ -768,6 +1154,16 @@ if __name__ == "__main__":
     logger.info("=" * 70)
     logger.info("Bot de Reconciliação Padroeira iniciado (modo escuta).")
     logger.info(f"Logs em tempo real: {LOGFILE}")
-    logger.info("Comandos: /fechar (entra no Saurus -> relatorio do dia -> historico)  |  /finalizar [MMAA]  |  /reconciliar [AAMM]  |  /amostra [N] [MMAA]")
+    logger.info("Comandos: /fechar [DD/MM/AAAA]  |  /finalizar [MMAA]  |  /reconciliar [AAMM]  |  /amostra [N] [AAMM]  |  /tabela  |  /doctor")
     logger.info("=" * 70)
-    bot.infinity_polling()
+    while True:
+        try:
+            logger.info("[POLLING] Conectando ao Telegram (infinity_polling)...")
+            bot.infinity_polling(timeout=25, long_polling_timeout=25)
+            logger.info("[POLLING] infinity_polling retornou (inesperado); reiniciando em 5s...")
+        except KeyboardInterrupt:
+            logger.info("[POLLING] Interrompido pelo operador.")
+            break
+        except Exception:
+            logger.exception("[POLLING] infinity_polling encerrou com erro; reconectando em 5s...")
+            time.sleep(5)
