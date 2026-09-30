@@ -20,4 +20,9 @@ Onde buscar contexto: 1) README/STATUS da pasta 2) ObSV 01-Projetos/<nome>
 3) RAG com tag=<nome> 4) Supabase lab-g. Em conflito, vale a pasta.
 Ao trocar de assunto, prefira sessão nova a --resume/--continue; sessões
 longas arrastam contexto antigo.
+Ao abrir um projeto, consulte no Supabase lab-g os handoffs com
+status=pending para esse projeto; incorpore cada um ao Log do STATUS.md
+e marque como accepted. Chats (web/mobile) não escrevem em pasta: eles
+registram handoff no Supabase ou entregam o bloco de encerramento ao
+usuário. Ao consultar a RAG, SEMPRE filtre por tag=<projeto>.
 <!-- PROTOCOLO_LAB:FIM -->
