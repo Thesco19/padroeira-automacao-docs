@@ -517,7 +517,7 @@ POST /token
 ## 11. Observações Finais
 - **Servidor 100% funcional** em `/mcp` (porta 8091).
 - **PKCE obrigatório** (OAuth 2.1 / spec do MCP).
-- Para testes manuais, registre um cliente via `/register` antes de usar `/authorize`.
+- Para exemplos manuais, registre um cliente via `/register` antes de usar `/authorize`.
 - Em produção:
   - Persista os dados OAuth (SQLite/Redis).
   - Defina `MCP_BEARER_TOKEN` no `.env`.

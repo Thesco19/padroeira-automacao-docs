@@ -1,0 +1,14 @@
+# CoreDNS — filtro AAAA por-domínio (NODATA só para AAAA, A continua passando)
+# DESCOBERTA: nesta versão (1.14.7) `template` com regex `.*` NÃO casa (só nome exato casa).
+# Por isso usamos lista explícita de nomes exatos (provado em exemplo: ANSWER:0, 39 bytes).
+# Bloquear o QNAME inicial basta: o cliente recebe NODATA e nem segue o CNAME (Fastly/Akamai).
+# Para cobrir novos hosts de vídeo, veja `docker logs coredns_aaaa_filter` e acrescente o nome aqui.
+.:5353 {
+    log
+    errors
+    template IN AAAA www.paramountplus.com paramountplus.com api.paramountplus.com www.disneyplus.com disneyplus.com api.disneyplus.com cdn.disneyplus.com dssott.com cbsaavideo.com {
+        rcode NOERROR
+    }
+    cache 300
+    forward . 1.1.1.1 8.8.8.8
+}

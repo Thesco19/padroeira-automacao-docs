@@ -35,10 +35,10 @@ projetos independentes. Não deve ser tratado como uma única aplicação.
 ## Procedimento de trabalho
 
 1. Confirmar qual laboratório/projeto é afetado.
-2. Ler arquivos relacionados, dependências e testes antes de editar.
+2. Ler arquivos relacionados, dependências e exemplos antes de editar.
 3. Identificar causa raiz, impacto e riscos; apresentar a estratégia antes da mudança.
 4. Preservar fronteiras arquiteturais e evitar alterações em projetos vizinhos.
-5. Executar validações proporcionais: testes unitários para backend e verificação de
+5. Executar validações proporcionais: exemplos unitários para backend e verificação de
    navegador quando houver impacto em interface.
 6. Registrar decisões, runbooks ou ADRs no Vault quando a alteração justificar.
 
@@ -60,7 +60,7 @@ projetos independentes. Não deve ser tratado como uma única aplicação.
 - Infraestrutura de coordenação: `lab-g/README.md` e `lab-g/docs/`.
 - Arquitetura da aplicação Python da raiz: `docs/plano_arquitetura_hexagonal.md`,
   `app/domain/`, `app/ports/` e `app/application/services/`.
-- Ambiente de testes de interface: `lab-d/stacks/playwright-mcp/README.md`.
+- Ambiente de exemplos de interface: `lab-d/stacks/playwright-mcp/README.md`.
 - Avaliação de roteamento/compatibilidade de clientes: `lab-e/omniroute/`.
 
 ## Limites desta nota

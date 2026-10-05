@@ -1,30 +1,29 @@
-# Projeto: Reconciliação Fiscal V2 (Padroeira / Restaurante)
+# Projeto: Automação & Reconciliação Padroeira (aut-v1 Async)
 
-## 🧠 REGRA DE OURO: MEMÓRIA COMPARTILHADA (MCP)
-**ESTE PROJETO É OPERADO POR MÚLTIPLOS AGENTES (Claude, Gemini, OpenCode, JCode, Kilo).**
-- **Obrigatório:** Antes de qualquer ação, leia `MCP_SHARED_MEMORY_GUIDE.md` e execute `memoria_listar` via MCP server.
-- **Persistência:** Toda decisão técnica ou mudança de status deve ser salva via `memoria_salvar` ou `rag_indexar`.
-- **Contexto:** Use a pasta `.mcp_context/` para manter a coerência entre as sessões de diferentes agentes.
+## Ferramentas & CLI Ativas
+- Agentes suportados: Claude Code, Codex, OpenCode.
+- Módulo Principal: automacao_padroeira/aut-v1/
 
-## Regras invioláveis
-- NUNCA escrever nos arquivos de produção do Box (montado em ~/box_lab).
-- Testes e desenvolvimento sempre em testes/ ou mock_box/, nunca nos originais.
-- Linhas 14 e 40 do Md: nunca valor estático, sempre as fórmulas literais
-  (linha 14: =SUM({col}10:{col}13), linha 40: ={col}37-{col}38)
-- Coluna Q do Balancete: nunca valor fixo, sempre =SUM(B{linha}:P{linha})
+## Contexto e Premissas do Ecossistema
+- Orquestração Assíncrona: Bot Telegram + Playwright (sessão única) + Openpyxl.
+- Regra do Restaurante: O restaurante NUNCA abre em dias sem movimento no caixa (calendario_padroeira.py).
 
-## Estrutura de dados
-- Sangria: linha 42, coluna A no Movto_cx2 / Md
-- MAPA_DIARIO_PAD: dicionário de mapeamento coluna Balancete -> linha Diário
-  - Inclui 'R': 42 (Sangria)
-- Faturamento: linha 37 do Md, usado como âncora de varredura (não sequência cega de dias)
+## Regras Invioláveis de Código & Excel
+- Integridade de Fórmulas no Excel:
+  - Linha 14 e Linha 40 do Movimento Diário (Movto_diario.26XX.xlsx): NUNCA gravar valores estáticos, SEMPRE usar fórmulas literais (ex: ={col}37-{col}38 na linha 40).
+  - Coluna Q do Balancete (Pad26XX.xlsx): NUNCA valor estático, SEMPRE =SUM(B{linha}:P{linha}).
+- Mapeamento de Sangria: Gravada na Linha 42 do Movto_diario e espelhada no Balancete.
 
-## Arquivos principais
-- cortex_padroeira.py — bot Telegram, escuta "fechar"/"ok" em texto natural
-- engine_consolidacao.py — Fase 1: expansão horizontal + espelhamento vertical
-- motor_balancete.py — Fase 2: auditoria por faturamento + sangria + coluna Q
+## Estrutura Atual de Arquivos (aut-v1)
+- bot_reconciliation.py: Bot Telegram principal. Comandos: /fechar (parcial em tempo real), /finalizar (reconciliação + cleanup de processos órfãos) e /doctor (diagnóstico IA de logs).
+- async_reconciliation_v2.py: Orquestrador assíncrono central.
+- cortex_padroeira_async.py: Parsing dos relatórios (fechamento_caixa_YYYY-MM-DD.txt) e cálculo do Kg Equivalente.
+- extrator_saurus_sessao.py: Automação Playwright em sessão única para o portal Saurus.
+- engine_consolidacao_async.py: Injeção e auditoria no Movto_diario e Pad.
+- calendario_padroeira.py: Regra de dias operacionais vs dias fechados.
 
-## Ambiente
-- Arquivos reais em mock_box/Restaurante/A2026/ e mock_box/Padroeira_vendas/
-- Box montado via rclone em ~/box_lab (não sobrevive a reboot — remontar com
-  rclone mount box_remoto: ~/box_lab --daemon --vfs-cache-mode writes)
+## Diretrizes do Ambiente
+- Logs: Registrados em logs/reconciliation.log.
+- Início do Serviço: ./start_async_reconciliation.sh
+- Ambiente: Linux Mint no Mac Mini (teco-Macmini).
+

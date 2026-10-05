@@ -25,4 +25,5 @@ status=pending para esse projeto; incorpore cada um ao Log do STATUS.md
 e marque como accepted. Chats (web/mobile) não escrevem em pasta: eles
 registram handoff no Supabase ou entregam o bloco de encerramento ao
 usuário. Ao consultar a RAG, SEMPRE filtre por tag=<projeto>.
+Se o Supabase não responder, siga sem ele e registre isso no Log.
 <!-- PROTOCOLO_LAB:FIM -->

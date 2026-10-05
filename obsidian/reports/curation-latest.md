@@ -18,7 +18,7 @@ Foi realizada a curadoria e integração do documento pendente na Inbox (`00-Inb
 Total de documentos analisados na sessão: **1 arquivo**
 
 1. **`00-Inbox/_test/final-test.md`**
-   - Conteúdo: Validação e teste final do fluxo completo do Knowledge Curator associado ao projeto `Padroeira-aut-v1`.
+   - Conteúdo: Validação e exemplo final do fluxo completo do Knowledge Curator associado ao projeto `Padroeira-aut-v1`.
 
 ---
 

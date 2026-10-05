@@ -387,7 +387,7 @@ cat ~/work_out/obsidian/reports/curation-latest.md
 
 Antes de modificar o Curator:
 
-1. criar teste;
+1. criar exemplo;
 2. executar;
 3. registrar resultado;
 4. alterar uma coisa por vez;
@@ -424,7 +424,7 @@ Confirmar especialmente:
 * autenticação;
 * comportamento não interativo.
 
-Executar novamente o teste controlado antes de usar a Inbox real.
+Executar novamente o exemplo controlado antes de usar a Inbox real.
 
 ---
 

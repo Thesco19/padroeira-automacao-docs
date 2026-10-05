@@ -60,7 +60,7 @@ Durante a execução inicial, foram identificadas três anomalias críticas no p
 
 ## 5. Validação e Testes Passados
 
-- **Status da Validação:** 4 cenários de teste **PASS** aplicados diretamente nos Pads originais afetados por bugs.
+- **Status da Validação:** 4 cenários de exemplo **PASS** aplicados diretamente nos Pads originais afetados por bugs.
 - **Estratégia de Reparo:** Reparo executado in-place preservando os dados históricos e reexecutando o pipeline de forma determinística.
 
 ---

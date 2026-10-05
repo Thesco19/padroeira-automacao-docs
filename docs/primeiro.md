@@ -13,12 +13,12 @@ Tecnologias encontradas: Python (arquivos .py), possivelmente um pacote ou módu
 Confiança: Média
 Justificativa: O diretório contém arquivos Python, mas não há um README ou indicativo claro de seu propósito específico no contexto do projeto maior.
 
-Diretório: arquivados_testes
-Finalidade: Armazenamento de testes antigos ou arquivos que foram movidos para arquivo.
-Status: Legado (nome sugere arquivamento, conteúdo parece ser de testes antigos)
+Diretório: arquivados_exemplos
+Finalidade: Armazenamento de exemplos antigos ou arquivos que foram movidos para arquivo.
+Status: Legado (nome sugere arquivamento, conteúdo parece ser de exemplos antigos)
 Tecnologias encontradas: Vários arquivos Python e possivelmente configurações antigas.
 Confiança: Alta
-Justificativa: O nome "arquivados_testes" indica claramente que é um diretório para arquivar testes antigos.
+Justificativa: O nome "arquivados_exemplos" indica claramente que é um diretório para arquivar exemplos antigos.
 
 Diretório: backup
 Finalidade: Armazenamento de backups de arquivos ou estados anteriores do projeto.
@@ -44,7 +44,7 @@ Justificativa: É o diretório Git do repositório, essencial para versionamento
 Diretório: lab
 Finalidade: Laboratório para experimentos e desenvolvimento de funcionalidades relacionadas ao projeto principal.
 Status: Ativo (contém arquivos recentes e parece ser usado para desenvolvimento)
-Tecnologias encontradas: Python, possivelmente scripts de teste e desenvolvimento.
+Tecnologias encontradas: Python, possivelmente scripts de exemplo e desenvolvimento.
 Confiança: Média
 Justificativa: O nome sugere um laboratório de experimentação, e contém arquivos relacionados ao projeto principal.
 
@@ -77,11 +77,11 @@ Confiança: Alta
 Justificativa: É mencionado explicitamente nas instruções do projeto como necessário para coerência entre sessões de diferentes agentes.
 
 Diretório: mock_box
-Finalidade: Ambiente de mock que simula o ambiente de produção (Box) usado para testes e desenvolvimento sem afetar os dados reais.
+Finalidade: Ambiente de mock que simula o ambiente de produção (Box) usado para exemplos e desenvolvimento sem afetar os dados reais.
 Status: Ativo (contém estrutura de pastas que simula o ambiente de produção)
 Tecnologias encontradas: Estrutura de diretórios que simula o Box (pastas como Restaurante/A2026/, Padroeira_vendas/, etc.)
 Confiança: Alta
-Justificativa: É mencionado nas instruções do projeto como o ambiente de testes e desenvolvimento, montado via rclone.
+Justificativa: É mencionado nas instruções do projeto como o ambiente de exemplos e desenvolvimento, montado via rclone.
 
 Diretório: notebook_export
 Finalidade: Exportação de Jupyter Notebooks ou análises interativas.
@@ -192,7 +192,7 @@ Linguagem: Python
 Docker: Não identificado
 Git próprio: Parte do repositório principal
 Arquivos principais encontrados:
-- Vários scripts Python que parecem ser experimentos ou testes de funcionalidades
+- Vários scripts Python que parecem ser experimentos ou exemplos de funcionalidades
 Estado: Ativo (contém arquivos recentes)
 
 Projeto: lab-b
@@ -248,9 +248,9 @@ Deve permanecer na raiz: Sim, pois é uma prática comum manter backups no mesmo
 Justificativa: Embora os backups possam ser movidos para armazenamento externo, mantê-los no repositório facilita a restauração rápida durante o desenvolvimento.
 
 Diretório: mock_box
-Finalidade: Ambiente de mock que simula o ambiente de produção (Box) para testes e desenvolvimento.
-Deve permanecer na raiz: Sim, pois é usado para testes sem afetar dados reais, e é mencionado nas instruções do projeto.
-Justificativa: O projeto depende deste ambiente para desenvolvimento e teste seguro.
+Finalidade: Ambiente de mock que simula o ambiente de produção (Box) para exemplos e desenvolvimento.
+Deve permanecer na raiz: Sim, pois é usado para exemplos sem afetar dados reais, e é mencionado nas instruções do projeto.
+Justificativa: O projeto depende deste ambiente para desenvolvimento e exemplo seguro.
 
 ---
 
@@ -259,9 +259,9 @@ Justificativa: O projeto depende deste ambiente para desenvolvimento e teste seg
 - Diretórios duplicados: Não foram identificados diretórios duplicados com o mesmo nome exatamente, mas há múltiplos laboratórios (lab, lab_agente_web, lab-b, lab_inventory) que podem ter sobreposição de funcionalidade.
 - Projetos parcialmente misturados: Os diretórios lab, lab_agente_web, lab-b e lab_inventory parecem ser laboratórios ou experimentos que podem estar misturando funcionalidades do projeto principal sem clara separação.
 - Documentação espalhada: Há vários arquivos de documentação na raiz (info.md, PROGRESSO_V2.md, MCP_SHARED_MEMORY_GUIDE.md, INSTALAR_E_TESTAR_MCP.md) além do CLAUDE.md, o que pode causar confusão sobre onde encontrar informações específicas.
-- Possíveis arquivos órfãos: Arquivos como .cursorrules, .mcp.json e outros arquivos de configuração estão na raiz, o que é apropriado, mas alguns arquivos em diretórios como arquivados_testes podem ser órfãos (não utilizados mais).
-- Possíveis testes antigos: O diretório arquivados_testes contém claramente testes antigos, mas há possibilidade de testes antigos também em outros diretórios como lab ou lab-b.
-- Possíveis backups esquecidos: O diretório backup está ativo, mas há possibilidade de backups antigos em outros locais (como em arquivados_testes ou até mesmo na raiz com extensões de backup).
+- Possíveis arquivos órfãos: Arquivos como .cursorrules, .mcp.json e outros arquivos de configuração estão na raiz, o que é apropriado, mas alguns arquivos em diretórios como arquivados_exemplos podem ser órfãos (não utilizados mais).
+- Possíveis exemplos antigos: O diretório arquivados_exemplos contém claramente exemplos antigos, mas há possibilidade de exemplos antigos também em outros diretórios como lab ou lab-b.
+- Possíveis backups esquecidos: O diretório backup está ativo, mas há possibilidade de backups antigos em outros locais (como em arquivados_exemplos ou até mesmo na raiz com extensões de backup).
 
 ---
 

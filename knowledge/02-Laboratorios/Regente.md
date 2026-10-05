@@ -14,9 +14,10 @@ usando múltiplas CLIs de IA (claude, gemini, aider, jcode, kilo, pi, codex,
 opencode) como ferramentas subjacentes, com um **fallback unificado** para o
 gateway local OpenAI-compatível **OmniRoute** quando uma CLI falha.
 
-Ao lado do orquestrador, o projeto abriga um **produto web** desacoplado —
-o **AI Generator Universal** (`generator/`) — e uma **camada de ações
-destrutivas seguras de arquivo** (PLAN/BUILD em quarentena). O Regente é o
+Ao lado do orquestrador, o laboratório abriga um **produto web** desacoplado —
+o **AI Generator Universal** (`lab-b/generator`, separado do regente em
+2026-09-10) — e uma **camada de ações destrutivas seguras de arquivo**
+(PLAN/BUILD em quarentena). O Regente é o
 "condutor" do laboratório: dado um objetivo, planeja (architect), executa
 (fila com dependências) e sintetiza (Fase 3), persistindo tudo em cache,
 checkpoints, memória semântica e diário no Supabase.
@@ -92,8 +93,8 @@ Princípios estruturais aplicados:
 - `--build-from-plan`: move **apenas** itens `approved:true` para `quarantine/<plan_id>__<ts>/` + `manifest.json`; nunca `os.remove`.
 - `--restore-plan`: desfaz o build mais recente.
 
-### Produto desacoplado (`generator/`, v1.0.0) — AI Generator Universal
-- FastAPI standalone (porta 8090): geração de capas rap/gangster, img2img, face swap (InsightFace CPU), presets, galeria.
+### Produto desacoplado (`lab-b/generator/`, v1.0.0) — AI Generator Universal
+- FastAPI standalone (porta 8090): geração de capas rap/gangster, img2img, face swap (InsightFace CPU), presets, galeria. Fica junto do orquestrador? **Não** — movido para `~/work_out/lab-b/generator` (2026-09-10); `lab-b/shared` é symlink para `../lab-z/regente/shared`.
 - Providers registrados via `@register_provider` (Civitai, HuggingFace, OpenRouter, Gemini, Pollinations) com **verificação real de chave** antes de ativar; fallback em cadeia → rota livre do Pollinations.
 - Fluxo único: `ImagePipeline` → tradução de prompt → geração com fallback → pós-processamento → `~/Pictures/StudioUniversal/`.
 - **Status real 2026-08-04**: Civitai `400 insufficientBuzz`, HF `402` sem créditos, Gemini `429` quota free=0, OpenRouter sem chave → **na prática só o Pollinations (rota livre) gera**.
@@ -117,7 +118,7 @@ Princípios estruturais aplicados:
 | Persistência | JSON local (cache/checkpoints/memória) + **Supabase** (`regente_events`, `regente_projects`, `regente_steps`) |
 | UI | `rich` (TUI); FastAPI + Uvicorn + Web UI estática (produto `generator/`) |
 | IA de imagem | Civitai, HuggingFace, OpenRouter, Gemini, Pollinations |
-| Testes | pytest (**83 passed, 25.32s**), unittest (`generator/`), runners injetáveis |
+| Testes | pytest (**83 passed, 25.32s**), unittest (`lab-b/generator/`), runners injetáveis |
 | Obsidian | Vault oficial do lab em `/home/teco/work_out/knowledge` (REST API/MCP em `127.0.0.1:27123`/`27124`) |
 
 ---
@@ -132,11 +133,11 @@ Princípios estruturais aplicados:
 **Segurança / dados**
 4. **Supabase: RLS permissiva** (`USING true` nas tabelas `regente_*`) e `SUPABASE_SERVICE_ROLE` no orquestrador — aceitável para uso local único, **inaceitável antes de qualquer exposição**.
 5. **`--auto-approve` sem trava adicional** (timestamp/lock file) — pendência documentada; um `-y` em contexto errado executa agentes sem confirmação.
-6. **Chaves de API em `.env`** (`generator/.env`) e em `~/.claude/settings.json` / LiteLLM config — fora do git, mas sensíveis ao backup/vazamento.
+6. **Chaves de API em `.env`** (`lab-b/generator/.env`) e em `~/.claude/settings.json` / LiteLLM config — fora do git, mas sensíveis ao backup/vazamento.
 7. **`run_agent_cli` injeta credenciais no env do subprocess** — qualquer CLI de agente lê `ANTHROPIC_*`/`OPENAI_*`; é a intenção, mas amplia a superfície de exposição das chaves.
 
 **Confiabilidade / manutenção**
-8. **`regente.py` monolítico (1784 linhas)** — `StateMachine`, `AgentQueue`, `SemanticMemory`, `CheckpointManager`, orquestrador e CLI no mesmo arquivo; acoplamento interno dificulta teste isolado e evolução.
+8. **`regente.py` monolítico (1784 linhas)** — `StateMachine`, `AgentQueue`, `SemanticMemory`, `CheckpointManager`, orquestrador e CLI no mesmo arquivo; acoplamento interno dificulta exemplo isolado e evolução.
 9. **`_resume_from_checkpoint` muta `self.config`** (`agents.pop`) e reconstrói terminal de `results` — retomar com blueprint diferente pode levar a estado inconsistente; idempotência do resume não é totalmente coberta.
 10. **`datetime.utcnow()`** (deprecado em Python 3.12+) usado em `StateMachine` e orquestrador — risco de deprecation em versões futuras.
 11. **Fase 1 `architect` não valida `tool`** contra `SUPPORTED_TOOLS` antes de rodar; falha vira fallback silencioso para plano estático (comportamento documentado, rastreabilidade limitada).
@@ -152,7 +153,7 @@ Princípios estruturais aplicados:
 ## Melhorias sugeridas
 
 **Arquitetura / qualidade**
-1. **Fatiar `regente.py` em módulos** (`core/state.py`, `core/queue.py`, `core/memory.py`, `core/checkpoint.py`, `runners/`, `cli.py`), seguindo o padrão limpo já usado em `generator/` — reduz acoplamento e viabiliza testes unitários finos.
+1. **Fatiar `regente.py` em módulos** (`core/state.py`, `core/queue.py`, `core/memory.py`, `core/checkpoint.py`, `runners/`, `cli.py`), seguindo o padrão limpo já usado em `lab-b/generator/` — reduz acoplamento e viabiliza exemplos unitários finos.
 2. **Healthcheck + retry dedicado do OmniRoute** antes de marcar FAILED; **fallback de modelo** configurável (`auto/coding` → alternativa) quando o gateway recusar o primário.
 3. **Migrar `datetime.utcnow()` → `datetime.now(timezone.utc)`** (Python 3.12+).
 4. **Validação de schema do blueprint** (`pydantic` ou `jsonschema`) — hoje a validação é mínima (YAML vazio já é tratado, mas campos errados falham no meio da execução).
@@ -167,10 +168,10 @@ Princípios estruturais aplicados:
 9. **CI/CD**: pipeline com `pytest` + `ruff` + `mypy`; evento `TEST_SUITE_RESULT` já é o padrão de evidência — automatizar para cada push.
 10. **Métricas estruturadas** (Prometheus/OpenTelemetry) por agente/fase; hoje só há resumo em log + eventos Supabase.
 11. **Registrar ADRs no Vault** para as decisões P0 já tomadas (decoupling `shared/`, OmniRoute como fallback definitivo, quarentena PLAN/BUILD, nome do produto) — `knowledge/03-ADR`.
-12. **Produto generator**: decidir destino do `instalador_baixado`, apagar quarentena validada, e documentar a limitação real de provedores (ou configurar billing) para o produto não depender de um único serviço gratuito.
+12. **Produto generator (em `lab-b/generator`)**: decidir destino do `instalador_baixado`, apagar quarentena validada, e documentar a limitação real de provedores (ou configurar billing) para o produto não depender de um único serviço gratuito.
 
 **Testes**
-13. **Smoke E2E automatizado do fallback OmniRoute** contra o serviço real (o `~/.local/bin/claude-check` já faz a verificação básica — elevar a testes de integração do orquestrador).
+13. **Smoke E2E automatizado do fallback OmniRoute** contra o serviço real (o `~/.local/bin/claude-check` já faz a verificação básica — elevar a exemplos de integração do orquestrador).
 14. **Cobertura do `--resume`** com múltiplos cenários (blueprint alterado, agente mid-flight, checkpoint corrompido).
 
 ---

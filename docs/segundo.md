@@ -30,8 +30,8 @@ Baseado estritamente em evidências observáveis.
 - **Confiança**: Média
 - **Justificativa**: Contém estrutura de código Python (modelos, schemas, banco de dados) que sugere um aplicativo, mas sem documentação ou meta-arquivos de projeto.
 
-### arquivados_testes/
-- **Caminho**: /home/teco/work_out/arquivados_testes/
+### arquivados_exemplos/
+- **Caminho**: /home/teco/work_out/arquivados_exemplos/
 - **Tamanho aproximado**: 262M
 - **Número aproximado de arquivos**: 7486
 - **Número de subdiretórios**: 1013
@@ -51,7 +51,7 @@ Baseado estritamente em evidências observáveis.
 - **Arquivos mais importantes encontrados**: Não foi possível determinar
 - **Classificação**: Backup
 - **Confiança**: Alta
-- **Justificativa**: O nome "arquivados_testes" e a grande quantidade de arquivos e subdiretórios indicam armazenamento de longo prazo de testes antigos.
+- **Justificativa**: O nome "arquivados_exemplos" e a grande quantidade de arquivos e subdiretórios indicam armazenamento de longo prazo de exemplos antigos.
 
 ### backup/
 - **Caminho**: /home/teco/work_out/backup/
@@ -70,7 +70,7 @@ Baseado estritamente em evidências observáveis.
 - **Existe Cargo.toml?**: Não
 - **Existe Makefile?**: Não
 - **Principais linguagens encontradas**: Backup (.bak), Log (.log)
-- **Principais subdiretórios**: testes
+- **Principais subdiretórios**: exemplos
 - **Arquivos mais importantes encontrados**: *.bak, .aider.chat.history.md
 - **Classificação**: Backup
 - **Confiança**: Alta
@@ -143,7 +143,7 @@ Baseado estritamente em evidências observáveis.
 - **Arquivos mais importantes encontrados**: contexto.md, conversor.py, .env, .git
 - **Classificação**: Experimento
 - **Confiança**: Média
-- **Justificativa**: A estrutura contém múltiplos scripts Python e parece ser um ambiente de testes e experimentação.
+- **Justificativa**: A estrutura contém múltiplos scripts Python e parece ser um ambiente de exemplos e experimentação.
 
 ### lab_agente_web/
 - **Caminho**: /home/teco/work_out/lab_agente_web/
@@ -392,7 +392,7 @@ Arquivo: PROGRESSO_V2.md
 ## Diretórios suspeitos
 
 - **lab/**: Contém uma quantidade muito elevada de arquivos (23.017) e subdiretórios (3.097), sugerindo um acúmulo de experimentos não gerenciados ou arquivos temporários.
-- **arquivados_testes/**: Contém um grande número de arquivos (7.486) e muitos subdiretórios, o que sugere um acúmulo de arquivos possivelmente obsoletos ou mal estruturados.
+- **arquivados_exemplos/**: Contém um grande número de arquivos (7.486) e muitos subdiretórios, o que sugere um acúmulo de arquivos possivelmente obsoletos ou mal estruturados.
 - **lab_agente_web/**: Contém uma quantidade significativa de arquivos (4.378) e subdiretórios, o que pode indicar complexidade desnecessária ou acúmulo de experimentos.
 
 ---

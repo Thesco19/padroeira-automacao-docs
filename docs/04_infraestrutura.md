@@ -24,7 +24,7 @@ Documentar a infraestrutura técnica e os componentes de suporte que sustentam o
 
 ## Simulação e Testes
 - **Ambiente de Simulação:** Utiliza o diretório `/mock_box/` para simular o sistema de arquivos de produção, com estruturas de dados predefinidas em formato XLSX.
-- **Armazenamento de Testes:** Scripts e dados de testes legados ou arquivados estão localizados em `/arquivados_testes/`.
+- **Armazenamento de Testes:** Scripts e dados de exemplos legados ou arquivados estão localizados em `/arquivados_exemplos/`.
 
 ## Gestão de Versionamento e Backups
 - **Versionamento:** O projeto é versionado via Git, com o repositório principal na raiz (`/.git/`).

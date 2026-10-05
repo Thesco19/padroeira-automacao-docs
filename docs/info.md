@@ -74,13 +74,13 @@
 
 ### Descoberta dos Arquivos Reais
 - Localizados arquivos reais em `/home/teco/box_lab/`
-- Copiados para `/home/teco/work_out/testes/` para validação:
+- Copiados para `/home/teco/work_out/exemplos/` para validação:
   - Movto_cx2.xlsx
   - Movto_diario.2606.xlsx
   - Pad2606.xlsx
 
 ### Ajustes Realizados no Engine
-1. **Paths atualizados**: Apontando para `testes/` em vez de `mock_box/`
+1. **Paths atualizados**: Apontando para `exemplos/` em vez de `mock_box/`
 2. **aamm="2606"**: Configurado para Junho/2026 (arquivos reais)
 3. **Correção do bug float(v_total)**: Implementado método `_to_float()` seguro
 4. **Logs detalhados**: Adicionados logs para acompanhar detecção de datas
@@ -141,18 +141,18 @@
 
 ### Próximos Passos Sugeridos
 
-1. **Restaurar backup do Diário** para testes adicionais (se necessário)
-2. **Ajustar motor_balancete.py** para usar os mesmos paths (`testes/`) e `aamm="2606"`
+1. **Restaurar backup do Diário** para exemplos adicionais (se necessário)
+2. **Ajustar motor_balancete.py** para usar os mesmos paths (`exemplos/`) e `aamm="2606"`
 3. **Testar fluxo completo** `cortex → engine → motor` contra os arquivos reais
 4. **Validar transposição para o Balancete** (Pad2606.xlsx)
-5. **Preparar migração para produção** substituindo paths de `testes/` pelos reais do Box
+5. **Preparar migração para produção** substituindo paths de `exemplos/` pelos reais do Box
 
 ---
 
 ## Parte 6: Validação Final do Motor Balancete
 
 ### Configuração do Motor
-- **Paths atualizados**: Apontando para `testes/` em vez de `mock_box/`
+- **Paths atualizados**: Apontando para `exemplos/` em vez de `mock_box/`
 - **aamm="2606"**: Configurado para Junho/2026 (arquivos reais)
 - **Método `_to_float()`**: Adicionado para tratamento seguro de valores
 - **Tratamento de faturamento**: Substituído `float()` pelo método seguro
@@ -186,7 +186,7 @@
 
 1. **Status Geral:** Todas as fases marcadas como concluídas ✅
 2. **Validações Reais:** Seção adicionada registrando:
-   - Competência 2606 (Junho/2026) validada na pasta `testes/`
+   - Competência 2606 (Junho/2026) validada na pasta `exemplos/`
    - Engine Consolidacao: expansão horizontal, espelhamento vertical, preservação de fórmulas
    - Motor Balancete: auditoria por faturamento, mapeamento da Sangria, isolamento da Coluna Q
    - Bug do float corrigido com método `_to_float()`
@@ -213,7 +213,7 @@
 | 3 | Isolamento da Coluna Q | ✅ | =SUM(B{linha}:P{linha}) preservada |
 
 ### Próximos passos para produção:
-1. Substituir paths de `testes/` pelos reais do Box (`~/box_lab/`)
+1. Substituir paths de `exemplos/` pelos reais do Box (`~/box_lab/`)
 2. Validar fluxo completo `cortex → engine → motor` em produção
 3. Monitorar logs para eventuais ajustes finos
 
@@ -221,5 +221,5 @@
 
 1. **Estrutura dos arquivos**: Confirmada estrutura transposta (datas na linha 1, colunas 2+)
 2. **Tratamento de valores**: Implementado método `_to_float()` seguro para conversão
-3. **Ambiente de teste**: Usar pasta `testes/` com cópias dos arquivos reais para validação
-4. **Preservação de dados**: Sempre fazer backup antes de modificar arquivos de teste
+3. **Ambiente de exemplo**: Usar pasta `exemplos/` com cópias dos arquivos reais para validação
+4. **Preservação de dados**: Sempre fazer backup antes de modificar arquivos de exemplo

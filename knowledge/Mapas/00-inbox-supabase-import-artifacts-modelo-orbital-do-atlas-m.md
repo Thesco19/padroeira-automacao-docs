@@ -1,0 +1,10 @@
+# artifacts_Modelo_Orbital_do_Atlas
+## Modelo_Orbital_do_Atlas
+### title
+### artifact_type
+### artifact_format
+### author
+### source_agent
+### project
+### version
+### content

@@ -14,10 +14,10 @@
 4. **Interface Oficial REST v2**: O contrato público canônico da versão 2 é exposto via HTTP/HTTPS sob a raiz `/api/v1`.
 5. **Segurança de Rede sem Autenticação Própria**: O ObSV v2 não possui autenticação interna por tokens nem gerenciamento de usuários. A segurança do servidor é provida exclusivamente pela infraestrutura de rede: **HTTPS, Tailnet, ACLs do Tailscale, flag `tailscale_only` e Firewall**.
 6. **Biblioteca Padrão do Python (stdlib)**: É proibido introduzir qualquer dependência externa (`pip`). Todo o código de produção utiliza apenas os módulos nativos do Python (>= 3.11).
-7. **Framework Oficial de Testes é `unittest`**: Todos os testes automatizados utilizam estritamente o módulo `unittest` da biblioteca padrão. O uso de `pytest` ou outros runners terceiros é proibido no ambiente oficial.
+7. **Framework Oficial de Testes é `unittest`**: Todos os exemplos automatizados utilizam estritamente o módulo `unittest` da biblioteca padrão. O uso de `pytest` ou outros runners terceiros é proibido no ambiente oficial.
 8. **Diagnóstico Inofensivo (`doctor`)**: O comando `doctor` executa apenas leituras e inspeções ambientais. É proibido gerar efeitos colaterais no disco (como criar diretórios `mkdir`) durante o diagnóstico.
 9. **Fechamento Obrigatório de Toda Milestone**: Cada milestone deve obrigatoriamente finalizar com a validação completa de quatro pilares:
-   - **`unittest`**: Suíte de testes unitários e de integração 100% verde.
+   - **`unittest`**: Suíte de exemplos unitários e de integração 100% verde.
    - **`doctor`**: Diagnóstico `obsv doctor` executado sem erros nem alterações no disco.
    - **`verify`**: Execução do comando de verificação `obsv verify`.
    - **`benchmark`**: Medição objetiva e registro de desempenho da funcionalidade entregue na milestone.
@@ -169,9 +169,9 @@ M01 (Contratos e ADRs)
 * **Riscos Técnicos**:
   * Bloqueios indeterminados (hangs) se os descritores de arquivo não forem fechados em `finally`.
 * **Estratégia de Teste (`unittest`)**:
-  * `tests/test_concurrency_core.py`: Suíte intensiva de testes multithread e multiprocesso com `concurrent.futures`.
+  * `tests/test_concurrency_core.py`: Suíte intensiva de exemplos multithread e multiprocesso com `concurrent.futures`.
 * **Procedimento de Rollback**:
-  * Destruir processos de teste e reverter o módulo de locking/escrita.
+  * Destruir processos de exemplo e reverter o módulo de locking/escrita.
 * **Fechamento Obrigatório da Milestone**:
   - [ ] **unittest**: `python3 -m unittest discover -s tests -p "test_*.py"` (100% verde)
   - [ ] **doctor**: `obsv doctor` (retorno 0 / sem side-effects no disco)
@@ -271,7 +271,7 @@ M01 (Contratos e ADRs)
 * **Critérios Objetivos de Conclusão**:
   * Operação de reindexação completa reproduz com exatidão o estado de indexações incrementais.
   * Falhas no SQLite durante escritas marcam o índice como `dirty` sem desfazer a alteração no vault.
-  * Consultas de busca por FTS5 ou texto retornam em menos de 100ms em vaults de teste.
+  * Consultas de busca por FTS5 ou texto retornam em menos de 100ms em vaults de exemplo.
 * **Riscos Técnicos**:
   * Dessincronização entre filesystem e SQLite após quedas abruptas de energia ou interrupções de processo.
 * **Estratégia de Teste (`unittest`)**:
@@ -428,7 +428,7 @@ M01 (Contratos e ADRs)
 * **Dependências**: M12.
 * **Critérios Objetivos de Conclusão**:
   * O serviço inicia, reinicia e executa sob `systemd` sem privilégios de `root`.
-  * Suíte de testes `unittest` passa 100% sem alertas ou vazamentos de recursos.
+  * Suíte de exemplos `unittest` passa 100% sem alertas ou vazamentos de recursos.
   * Documentação operacional e manual de implantação finalizados.
 * **Riscos Técnicos**:
   * Exaustão de descritores de arquivo (`ulimit -n`) sob uso prolongado do servidor.
@@ -476,8 +476,8 @@ M01 (Contratos e ADRs)
    ```bash
    python3 -m unittest discover -s tests -p "test_*.py" -v
    ```
-3. Nenhum teste pode depender do estado da máquina host ou acessar o diretório de usuário real (`~/.config` ou `~/.local`).
-4. Todo teste de escrita ou banco de dados deve utilizar diretórios temporários via `tempfile.TemporaryDirectory` ou banco SQLite em memória (`:memory:`).
+3. Nenhum exemplo pode depender do estado da máquina host ou acessar o diretório de usuário real (`~/.config` ou `~/.local`).
+4. Todo exemplo de escrita ou banco de dados deve utilizar diretórios temporários via `tempfile.TemporaryDirectory` ou banco SQLite em memória (`:memory:`).
 
 ---
 
@@ -540,4 +540,4 @@ Antes de declarar uma milestone concluída e iniciar a próxima, o revisor arqui
 - [ ] **Contrato `SPEC.md` Respeitado**: Nenhuma nova funcionalidade ou alteração de contrato foi introduzida além do especificado.
 - [ ] **Sem Autenticação por Token Própria**: A camada HTTP confia estritamente na segurança de perímetro (HTTPS, Tailnet, ACLs, Firewall).
 - [ ] **Isolamento de Componentes**: A camada de apresentação (CLI/HTTP) não realiza operações diretas no sistema de arquivos sem passar pelo `Vault`.
-- [ ] **Projeção SQLite Desacoplada**: A exclusão do banco de dados SQLite não afeta a leitura básica do vault nem os testes da camada de arquivos.
+- [ ] **Projeção SQLite Desacoplada**: A exclusão do banco de dados SQLite não afeta a leitura básica do vault nem os exemplos da camada de arquivos.

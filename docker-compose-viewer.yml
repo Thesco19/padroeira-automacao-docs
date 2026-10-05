@@ -1,0 +1,13 @@
+services:
+  atlas-viewer:
+    image: nginx:alpine
+    container_name: atlas-viewer
+    ports:
+      - "8080:80"
+    volumes:
+      - /opt/stacks/atlas-viewer/index.html:/usr/share/nginx/html/index.html:ro
+      - /opt/stacks/atlas-viewer/README.md:/usr/share/nginx/html/README.md:ro
+      - /opt/stacks/atlas-viewer/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: always

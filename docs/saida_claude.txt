@@ -128,7 +128,7 @@ d) Nova Aba no Balancete
 4. Atualizar logs e estatísticas:
   - Adicionar métricas específicas para o espelhamento (ex: vertical_lines_modified).
 5. Testar com dados mock:
-  - Usar o generate_mock_excel.py para criar arquivos de teste e validar a nova estrutura.
+  - Usar o generate_mock_excel.py para criar arquivos de exemplo e validar a nova estrutura.
 
 ---
 5. Exemplo de Código para o Espelhamento Vertical

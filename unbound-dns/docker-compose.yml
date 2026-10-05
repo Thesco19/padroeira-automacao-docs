@@ -1,0 +1,24 @@
+services:
+  unbound:
+    image: mvance/unbound:latest
+    container_name: unbound_dns
+    restart: unless-stopped
+    ports:
+      - "5354:53/udp"
+      - "5354:53/tcp"
+    volumes:
+      - ./unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
+
+  # Filtro AAAA por-domínio (só AAAA vira NODATA, A continua passando).
+  # Aponte a Smart TV para <IP-DO-HOST>:5355 para testar sem quebrar a casa toda.
+  # 5353 evitado (mDNS/Avahi já usa 0.0.0.0:5353 neste host). 53 evitado (systemd-resolved).
+  coredns-aaaa-filter:
+    image: coredns/coredns:latest
+    container_name: coredns_aaaa_filter
+    restart: unless-stopped
+    ports:
+      - "5355:5353/udp"
+      - "5355:5353/tcp"
+    volumes:
+      - ./Corefile.streaming-aaaa-filter:/Corefile:ro
+    command: ["-conf", "/Corefile"]

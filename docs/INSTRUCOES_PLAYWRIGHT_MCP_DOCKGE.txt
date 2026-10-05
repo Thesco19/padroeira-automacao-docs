@@ -183,4 +183,4 @@ Os arquivos acima foram **validados** e estão corretos. Copie e cole diretament
    ```bash
    cd /opt/stacks/playwright-mcp && docker compose up -d
    ```
-4. Atualize o `.mcp.json` e teste!
+4. Atualize o `.mcp.json` e exemplo!

@@ -17,7 +17,7 @@ Análise de referências entre diretórios (imports, configurações, scripts).
 | Diretório | Pode ser movido? | Justificativa |
 | :--- | :--- | :--- |
 | app/ | NÃO FOI POSSÍVEL DETERMINAR | Evidência insuficiente sobre a utilização deste diretório. |
-| arquivados_testes/ | SIM | Parece ser apenas um repositório de arquivos antigos sem referências ativas. |
+| arquivados_exemplos/ | SIM | Parece ser apenas um repositório de arquivos antigos sem referências ativas. |
 | backup/ | SIM | Estrutura de backup independente. |
 | .claude/ | NÃO | Diretório de infraestrutura de configuração do agente. |
 | .git/ | NÃO | Repositório principal do sistema. |
@@ -65,5 +65,5 @@ Arquivos que obrigatoriamente devem permanecer na raiz (devem estar no local de 
 | recursos/ | Médio | Pode quebrar configurações de serviços (ex: Litellm). |
 | .claude/ | Médio | Pode quebrar a funcionalidade dos agentes. |
 | lab/ | Médio | Alta complexidade e incerteza de uso. |
-| arquivados_testes/ | Baixo | Apenas arquivos legados. |
+| arquivados_exemplos/ | Baixo | Apenas arquivos legados. |
 | notebook_export/ | Baixo | Apenas documentação. |

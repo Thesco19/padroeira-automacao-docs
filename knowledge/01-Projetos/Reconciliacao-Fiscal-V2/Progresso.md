@@ -7,7 +7,7 @@
 
 ## Validações Reais Executadas
 
-✅ **Competência 2606 (Junho/2026) validada com sucesso na pasta `testes/` (Rodada Real 2606):**
+✅ **Competência 2606 (Junho/2026) validada com sucesso na pasta `exemplos/` (Rodada Real 2606):**
 - **Engine Consolidacao:** Expansão horizontal, espelhamento vertical com Sangria, preservação de fórmulas
 - **Motor Balancete:** Auditoria por faturamento (linha 37), mapeamento da Sangria (Coluna R), isolamento da Coluna Q, *validado com sucesso na rodada real de 2606*.
 - **Bug do float corrigido:** Método `_to_float()` implementado para tratamento seguro de valores
@@ -55,7 +55,7 @@ Todos os requisitos foram atendidos:
 
 ## Ambiente de Testes
 - Arquivos reais: mock_box/Restaurante/A2026/ e mock_box/Padroeira_vendas/
-- Cópias de teste: testes/ (nunca escrever nos originais)
+- Cópias de exemplo: exemplos/ (nunca escrever nos originais)
 
 ---
 

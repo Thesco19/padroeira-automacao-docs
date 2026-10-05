@@ -15,9 +15,9 @@ Documentar as diretrizes e padrões de desenvolvimento observados no Projeto Atl
 - **Padrões de Commit:** Evidenciado por histórico de commits indicando features e revisões (ex: `feat:`, `claude code review`).
 
 ## Testes e Automação
-- **Ambiente de Testes:** Utilização de um diretório dedicado (`mock_box/`) para simular o ambiente de produção, separando dados reais de testes.
-- **Automação:** Os testes são integrados no fluxo de trabalho (ex: `test_conversor.py`), indicando uma prática de validar componentes isoladamente.
-- **Validação de Paridade:** Observada a implementação de scripts específicos para verificar a paridade entre planilhas (`teste_paridade.py`).
+- **Ambiente de Testes:** Utilização de um diretório dedicado (`mock_box/`) para simular o ambiente de produção, separando dados reais de exemplos.
+- **Automação:** Os exemplos são integrados no fluxo de trabalho (ex: `test_conversor.py`), indicando uma prática de validar componentes isoladamente.
+- **Validação de Paridade:** Observada a implementação de scripts específicos para verificar a paridade entre planilhas (`exemplo_paridade.py`).
 
 ## Gerenciamento de Configuração
 - **Configuração de Agentes:** Utiliza arquivos JSON/YAML centralizados para configuração de serviços e proxys de LLM (ex: `/opt/stacks/litellm/config.yaml`).
@@ -29,7 +29,7 @@ Documentar as diretrizes e padrões de desenvolvimento observados no Projeto Atl
 
 ## Limitações Observadas
 - NÃO FOI POSSÍVEL DETERMINAR a existência de um guia de estilo de código formal (ex: PEP8 estrito).
-- NÃO FOI POSSÍVEL DETERMINAR a cobertura de testes automatizados completa do sistema.
+- NÃO FOI POSSÍVEL DETERMINAR a cobertura de exemplos automatizados completa do sistema.
 - NÃO FOI POSSÍVEL DETERMINAR a estratégia de branching utilizada para novas funcionalidades.
 
 ## Referências
