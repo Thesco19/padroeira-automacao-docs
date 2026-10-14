@@ -1,0 +1,1 @@
+{"mcpServers":{"mcp-lab-universal":{"url":"http://127.0.0.1:8765/sse"},"obsv":{"args":["mcp"],"command":"/home/teco/.local/bin/obsv"},"supabase":{"args":["-y","@supabase/mcp-server-supabase"],"command":"npx"}}}

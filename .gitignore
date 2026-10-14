@@ -31,6 +31,7 @@ __pycache__/
 .coverage
 .project_facts.txt
 AGENTS.md
+!knowledge/AGENTS.md
 AIDER.md
 CODEX.md
 GEMINI.md
