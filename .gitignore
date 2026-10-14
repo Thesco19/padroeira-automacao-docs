@@ -57,6 +57,9 @@ lab-a/
 lab-b/
 lab-z/
 
+# Checkout aninhado de terceiros (tem .git próprio, 499M) — fora do código
+repos/
+
 # Caches e ficheiros temporários do lab
 .playwright-mcp/
 data/
