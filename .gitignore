@@ -57,3 +57,11 @@ lab-a/
 lab-b/
 lab-z/
 
+# Caches e ficheiros temporários do lab
+.playwright-mcp/
+data/
+caixa2-diagnostico/
+tinytuya.json
+tests.txt
+*.bak_*
+
